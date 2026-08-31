@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/writing-agent",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

@@ -104,7 +104,8 @@ function JobProgressBody() {
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
-    (async () => {
+
+    async function load() {
       const [{ data: proj }, { count }] = await Promise.all([
         supabase
           .from("projects")
@@ -118,9 +119,15 @@ function JobProgressBody() {
         setChapterCount(count ?? 0);
         setLoading(false);
       }
-    })();
+    }
+
+    load();
+    // The Writing Agent runs server-side on a cron schedule, independent of
+    // this tab — poll only to reflect its real progress while watching.
+    const interval = setInterval(load, 8000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [projectId, supabase]);
 

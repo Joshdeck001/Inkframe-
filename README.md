@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-5 of the build plan are done:
+Steps 1-6 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -28,10 +28,26 @@ Steps 1-5 of the build plan are done:
    Approve/Edit/Regenerate review screen (wizard Step 9). Nothing moves past
    that screen until the user approves.
 
-Stopped here per plan, for review before Step 6 (the autonomous Writing
-Agent). `job-progress` shows the real project status (currently: queued,
-waiting on a Writing Agent that doesn't exist yet) rather than a fabricated
-progress bar.
+6. **Autonomous Writing Agent** — `/api/cron/writing-agent`, triggered on a
+   schedule by Vercel Cron (`vercel.json`), advances exactly one chapter per
+   invocation for the single least-recently-touched `QUEUED`/`WRITING`
+   project: seeds `chapters` from the approved blueprint on first run, drafts
+   the next pending chapter with Claude (continuity MVP: passes the tail of
+   the previous chapter as context — the fuller story_bible-driven
+   Continuity Engine lands once the Fiction/Outline/Web-Fic prompt specs are
+   available), and updates `chapters`/`project_scope.words_written`. This
+   runs server-side on a cron schedule, not tied to any open browser tab —
+   `job-progress` just polls every 8s to reflect real progress while
+   watching, and works exactly the same if you close the tab.
+   Requires `CRON_SECRET` (see `.env.local.example`) — Vercel sends it
+   automatically once that env var exists in the project. For local testing
+   without Vercel Cron, trigger a tick manually:
+   `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/writing-agent`
+
+Once all of a project's chapters are drafted, status moves to `REVIEWING` —
+that's an honest stopping point: the Quality Loop (Step 7) that would
+normally act on `REVIEWING` isn't built yet, so chapters sit there
+readable-but-unreviewed rather than the UI claiming a review happened.
 
 ## Local setup
 
@@ -61,5 +77,5 @@ All in `.env.local` (gitignored, never committed) — see
 
 ## What's next
 
-Step 6 (autonomous Writing Agent), per the roadmap in
-`InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 7 (Quality Loop: score each chapter and trigger revisions), per the
+roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

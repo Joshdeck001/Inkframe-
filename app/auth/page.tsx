@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title } from "@/content/auth";
 
+export const dynamic = "force-dynamic";
+
 type Mode = "signin" | "signup";
 
 function passwordIssues(pw: string): string[] {

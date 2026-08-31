@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { css, title } from "@/content/dashboard";
 import { copilotCss } from "@/content/dashboard-copilot.css";
 
+export const dynamic = "force-dynamic";
+
 type ProjectRow = {
   id: string;
   status: string;

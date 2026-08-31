@@ -7,22 +7,22 @@ import { css, title as pageTitle } from "@/content/job-progress";
 
 export const dynamic = "force-dynamic";
 
-// Only Blueprint, Writing, and Quality are real (Steps 5-7). Research,
-// Cover, Metadata, Compliance, and Export aren't automated yet — they stay
-// visually pending no matter the project's status, rather than ever being
-// marked "done" for work that hasn't actually happened.
+// Research (Step 8's category-research half) doesn't post anything back to
+// this page yet, so it stays visually pending regardless of status — every
+// other stage is real (Steps 5-9) and only ever marked done in the order
+// it's actually run: Blueprint, Writing, Quality, Cover, Metadata,
+// Compliance, Export (the DOCX Formatting Department produces).
 const PIPELINE = [
   { key: "blueprint", label: "Blueprint", icon: "✓", implemented: true },
   { key: "research", label: "Research", icon: "🔎", implemented: false },
   { key: "writing", label: "Writing", icon: "✎", implemented: true },
   { key: "quality", label: "Quality", icon: "◈", implemented: true },
-  { key: "cover", label: "Cover", icon: "🎨", implemented: false },
-  { key: "metadata", label: "Metadata", icon: "▤", implemented: false },
-  { key: "compliance", label: "Compliance", icon: "✓", implemented: false },
-  { key: "export", label: "Export", icon: "▦", implemented: false },
+  { key: "cover", label: "Cover", icon: "🎨", implemented: true },
+  { key: "metadata", label: "Metadata", icon: "▤", implemented: true },
+  { key: "compliance", label: "Compliance", icon: "✓", implemented: true },
+  { key: "export", label: "Export", icon: "▦", implemented: true },
 ] as const;
 
-/** Index into PIPELINE among only the implemented stages: blueprint(0)/writing(2)/quality(3). */
 function stageIndexForStatus(status: string): number {
   switch (status) {
     case "IDEA":
@@ -35,11 +35,19 @@ function stageIndexForStatus(status: string): number {
       return 2; // actively drafting chapters
     case "REVIEWING":
       return 3; // chapters written, Quality Loop actively scoring/revising
+    case "GENERATING_COVER":
+      return 4;
+    case "GENERATING_METADATA":
+      return 5;
+    case "COMPLIANCE_CHECK":
+      return 6;
+    case "FORMATTING":
+      return 7; // generating the DOCX
     case "READY_FOR_REVIEW":
     case "USER_APPROVED":
     case "READY_FOR_EXPORT":
     case "EXPORTED":
-      return 4; // every chapter written and quality-approved; nothing past that is automated yet
+      return 8; // past the last real stage — everything implemented is done
     default:
       return -1;
   }
@@ -53,11 +61,19 @@ function taskTextForStatus(status: string): string {
       return "Writing chapters.";
     case "REVIEWING":
       return "Chapters drafted — running the Quality Loop.";
+    case "GENERATING_COVER":
+      return "Drafting cover concepts.";
+    case "GENERATING_METADATA":
+      return "Writing description, keywords, and categories.";
+    case "COMPLIANCE_CHECK":
+      return "Running platform compliance checks.";
+    case "FORMATTING":
+      return "Assembling the manuscript file.";
     case "READY_FOR_REVIEW":
     case "USER_APPROVED":
     case "READY_FOR_EXPORT":
     case "EXPORTED":
-      return "All chapters written and quality-approved. Cover, metadata, and compliance aren't automated yet — you can read the manuscript now.";
+      return "Ready for your review — manuscript, cover concepts, metadata, and compliance checks are below.";
     default:
       return "Waiting on the Book Blueprint.";
   }
@@ -69,6 +85,17 @@ type ProjectData = {
   project_scope: { words_written: number | null; target_word_count: number | null } | null;
 };
 
+type MetadataData = {
+  description_long: string | null;
+  description_short: string | null;
+  keywords: string[];
+  categories: string[];
+};
+
+type CoverConcept = { prompt: string; rationale: string; status: string };
+
+type ComplianceCheck = { check_type: string; status: string; detail: string };
+
 function JobProgressBody() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -78,6 +105,10 @@ function JobProgressBody() {
   const [project, setProject] = useState<ProjectData | null>(null);
   const [chapterCount, setChapterCount] = useState(0);
   const [loading, setLoading] = useState(!!projectId);
+  const [metadata, setMetadata] = useState<MetadataData | null>(null);
+  const [coverConcepts, setCoverConcepts] = useState<CoverConcept[]>([]);
+  const [complianceChecks, setComplianceChecks] = useState<ComplianceCheck[]>([]);
+  const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
 
   useEffect(() => {
     document.title = pageTitle;
@@ -88,24 +119,38 @@ function JobProgressBody() {
     let cancelled = false;
 
     async function load() {
-      const [{ data: proj }, { count }] = await Promise.all([
+      const [{ data: proj }, { count }, { data: meta }, { data: cover }, { data: compliance }] = await Promise.all([
         supabase
           .from("projects")
           .select("status, project_identity(working_title, subtitle), project_scope(words_written, target_word_count)")
           .eq("id", projectId)
           .single(),
         supabase.from("chapters").select("id", { count: "exact", head: true }).eq("project_id", projectId),
+        supabase
+          .from("metadata_department")
+          .select("description_long, description_short, keywords, categories")
+          .eq("project_id", projectId)
+          .maybeSingle(),
+        supabase.from("cover_department").select("concepts").eq("project_id", projectId).maybeSingle(),
+        supabase
+          .from("compliance_checks")
+          .select("check_type, status, detail")
+          .eq("project_id", projectId)
+          .order("checked_at", { ascending: false }),
       ]);
       if (!cancelled) {
         setProject((proj as unknown as ProjectData) ?? null);
         setChapterCount(count ?? 0);
+        setMetadata(meta ?? null);
+        setCoverConcepts((cover?.concepts as CoverConcept[] | undefined) ?? []);
+        setComplianceChecks((compliance as ComplianceCheck[] | undefined) ?? []);
         setLoading(false);
       }
     }
 
     load();
-    // The Writing Agent runs server-side on a cron schedule, independent of
-    // this tab — poll only to reflect its real progress while watching.
+    // Every department runs server-side on a cron schedule, independent of
+    // this tab — poll only to reflect real progress while watching.
     const interval = setInterval(load, 8000);
     return () => {
       cancelled = true;
@@ -118,6 +163,21 @@ function JobProgressBody() {
   const words = project?.project_scope?.words_written ?? 0;
   const targetWords = project?.project_scope?.target_word_count ?? 0;
   const pct = targetWords ? Math.min(100, Math.round((words / targetWords) * 100)) : status === "QUEUED" ? 8 : 2;
+  const isReady = ["READY_FOR_REVIEW", "USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(status);
+
+  async function handleDownload() {
+    if (!projectId) return;
+    setDownloadState("loading");
+    try {
+      const res = await fetch(`/api/export-download?project=${projectId}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Download failed.");
+      window.open(json.url, "_blank");
+      setDownloadState("idle");
+    } catch {
+      setDownloadState("error");
+    }
+  }
 
   return (
     <>
@@ -134,8 +194,17 @@ function JobProgressBody() {
       </header>
 
       <div className="wrap">
-        <div className="status-pill" style={status === "QUEUED" ? { background: "rgba(255,180,50,.12)", color: "#ffc266" } : undefined}>
-          <span className="pulse"></span> {status === "QUEUED" ? "QUEUED" : "AI WRITING AGENT"}
+        <div
+          className="status-pill"
+          style={
+            status === "QUEUED"
+              ? { background: "rgba(255,180,50,.12)", color: "#ffc266" }
+              : isReady
+              ? { background: "rgba(40,200,140,.12)", color: "#5fe3b8" }
+              : undefined
+          }
+        >
+          <span className="pulse"></span> {status === "QUEUED" ? "QUEUED" : isReady ? "READY FOR REVIEW" : "AI WRITING AGENT"}
         </div>
         <h1>Your book is being prepared</h1>
         <p className="subtitle">
@@ -181,7 +250,7 @@ function JobProgressBody() {
             <div className="pipeline">
               {PIPELINE.map((step, i) => {
                 // Never mark a not-yet-built stage done/active, no matter what the
-                // index math implies — only Blueprint/Writing/Quality are real.
+                // index math implies — Research is the one stage still pending.
                 const done = step.implemented && (i < stageIndex || (i === stageIndex && status === "EXPORTED"));
                 const active = step.implemented && i === stageIndex && status !== "EXPORTED";
                 return (
@@ -204,6 +273,78 @@ function JobProgressBody() {
           </div>
         )}
 
+        {metadata && (
+          <div className="main-card">
+            <div className="task-row" style={{ borderTop: "none", paddingTop: 0 }}>
+              <span className="lbl" style={{ fontWeight: 700, color: "var(--ink)" }}>
+                Metadata Department
+              </span>
+            </div>
+            <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.6, margin: "6px 0 10px" }}>
+              {metadata.description_long}
+            </p>
+            {metadata.keywords.length > 0 && (
+              <p style={{ fontSize: "12px", color: "var(--muted)" }}>
+                <strong style={{ color: "var(--ink)" }}>Keywords:</strong> {metadata.keywords.join(" · ")}
+              </p>
+            )}
+            {metadata.categories.length > 0 && (
+              <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "4px" }}>
+                <strong style={{ color: "var(--ink)" }}>Categories:</strong> {metadata.categories.join(", ")}
+              </p>
+            )}
+          </div>
+        )}
+
+        {coverConcepts.length > 0 && (
+          <div className="main-card">
+            <div className="task-row" style={{ borderTop: "none", paddingTop: 0 }}>
+              <span className="lbl" style={{ fontWeight: 700, color: "var(--ink)" }}>
+                Cover Department — concept prompts
+              </span>
+            </div>
+            <p className="hint" style={{ margin: "4px 0 10px" }}>
+              Prompts only for now — rendering actual artwork needs an image-generation key that isn&apos;t
+              wired in yet.
+            </p>
+            {coverConcepts.map((c, i) => (
+              <div key={i} style={{ marginBottom: "10px", fontSize: "12.5px", color: "var(--muted)" }}>
+                <strong style={{ color: "var(--ink)" }}>Concept {i + 1}:</strong> {c.prompt}
+                <div style={{ fontSize: "11.5px", marginTop: "2px" }}>{c.rationale}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {complianceChecks.length > 0 && (
+          <div className="main-card">
+            <div className="task-row" style={{ borderTop: "none", paddingTop: 0 }}>
+              <span className="lbl" style={{ fontWeight: 700, color: "var(--ink)" }}>
+                Compliance checks
+              </span>
+            </div>
+            {complianceChecks.map((c, i) => (
+              <div className="task-row" key={i}>
+                <span className="lbl">{c.check_type.replace(/_/g, " ")}</span>
+                <span
+                  className="val"
+                  style={{
+                    color:
+                      c.status === "pass"
+                        ? "#5fe3b8"
+                        : c.status === "action_required"
+                        ? "#ff8595"
+                        : "#ffc266",
+                  }}
+                  title={c.detail}
+                >
+                  {c.status.replace(/_/g, " ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="hint-box">
           ✦ InkFrame&apos;s Readiness Score and Quality checks are internal assessments to help you gauge
           manuscript strength — they are not a guarantee of platform acceptance or publication approval.
@@ -214,15 +355,26 @@ function JobProgressBody() {
           <button className="btn btn-secondary" onClick={() => router.push("/dashboard")}>
             Back to Dashboard
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={() =>
-              alert(chapterCount > 0 ? "Opening manuscript viewer…" : "No chapters have been written yet.")
-            }
-          >
-            View Manuscript So Far
-          </button>
+          {isReady ? (
+            <button className="btn btn-primary" onClick={handleDownload} disabled={downloadState === "loading"}>
+              {downloadState === "loading" ? "Preparing download…" : "Download Manuscript (DOCX)"}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={() =>
+                alert(chapterCount > 0 ? "Opening manuscript viewer…" : "No chapters have been written yet.")
+              }
+            >
+              View Manuscript So Far
+            </button>
+          )}
         </div>
+        {downloadState === "error" && (
+          <p style={{ color: "var(--red)", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
+            Couldn&apos;t get a download link. Try again in a moment.
+          </p>
+        )}
       </div>
     </>
   );

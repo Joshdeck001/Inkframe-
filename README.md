@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-8 of the build plan are done:
+Steps 1-9 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -98,8 +98,37 @@ All in `.env.local` (gitignored, never committed) — see
    Amazon/GoodNovel/Meganovel — the summary says so rather than implying
    verified live market data.
 
+9. **Cover, Metadata, Compliance, and Formatting Departments** — once
+   every chapter is quality-approved, four more cron routes run in the same
+   sequence job-progress's pipeline icons already show them in (Cover →
+   Metadata → Compliance → Export), each reading the same project record:
+   - `/api/cron/cover-department` drafts 3 cover concepts as
+     image-generation *prompts* (`cover_department.concepts`) — actually
+     rendering artwork needs an image API key that isn't wired in yet, and
+     the UI says so rather than implying a real image exists.
+   - `/api/cron/metadata-department` writes real description/keywords(7,
+     <=50 chars each)/categories to `metadata_department`.
+   - `/api/cron/compliance-department` runs **deterministic** checks (no
+     LLM call) against the `platform_profiles` rules already seeded in
+     Step 2 — keyword count/length, repeated title words, AI-disclosure
+     (every InkFrame manuscript is AI-generated, so this is always flagged
+     action_required), the latest title-risk result, and chapter-length
+     guidance for serial platforms — into `compliance_checks`.
+   - `/api/cron/formatting-department` assembles every approved chapter
+     into a real `.docx` file (the `docx` npm package) and uploads it to a
+     new private Supabase Storage bucket (`supabase/migrations/0003_storage.sql`).
+     `/api/export-download` hands back a 60-second signed URL after
+     verifying the requester owns the project — there's no direct client
+     read access to the bucket. Only `docx` is produced; EPUB/PDF aren't
+     implemented, and `formatting_jobs.output_formats` only ever lists
+     what was actually generated.
+
+   Once formatting finishes, status reaches `READY_FOR_REVIEW` and
+   `job-progress` shows the real metadata, cover concept prompts, and
+   compliance results inline, plus a working "Download Manuscript (DOCX)"
+   button.
+
 ## What's next
 
-Step 9 (Cover Department, Metadata Department, Compliance Department,
-Formatting Department), per the roadmap in
+Step 10 (Final Quality Gate + Export Center), per the roadmap in
 `InkFrame_Opening_ClaudeCode_Prompt.md`.

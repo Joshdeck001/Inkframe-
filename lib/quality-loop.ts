@@ -94,8 +94,12 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
       .neq("status", "approved");
 
     if (unapprovedCount === 0) {
-      await supabase.from("projects").update({ status: "READY_FOR_REVIEW" }).eq("id", project.id);
-      return { processed: true, detail: `Project ${project.id}: every chapter approved, moved to READY_FOR_REVIEW.` };
+      // Hands off to the Cover → Metadata → Compliance → Formatting chain
+      // (Step 9) before landing on READY_FOR_REVIEW — matches both the
+      // schema's documented status order and job-progress's pipeline icon
+      // order, so nothing downstream has to fake a "done" out of sequence.
+      await supabase.from("projects").update({ status: "GENERATING_COVER" }).eq("id", project.id);
+      return { processed: true, detail: `Project ${project.id}: every chapter approved, moved to GENERATING_COVER.` };
     }
     return { processed: false, detail: `Project ${project.id}: chapters still mid-revision.` };
   }

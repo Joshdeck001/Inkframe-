@@ -11,6 +11,11 @@
      GoodNovel / Meganovel rules) and a starter `genre_taxonomy` (Amazon's
      top-level tree, plus the three genres with a written trope add-on:
      Mafia Romance, Small Town Romance, Romantasy).
+   - `supabase/migrations/0003_storage.sql` — a private `exports` bucket
+     for generated manuscript files (DOCX today). It's private on purpose:
+     the app never reads it directly from the browser, only through
+     `/api/export-download`, which signs a short-lived URL after checking
+     the requester owns the project.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

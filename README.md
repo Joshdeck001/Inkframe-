@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-6 of the build plan are done:
+Steps 1-7 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -44,10 +44,22 @@ Steps 1-6 of the build plan are done:
    without Vercel Cron, trigger a tick manually:
    `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/writing-agent`
 
-Once all of a project's chapters are drafted, status moves to `REVIEWING` —
-that's an honest stopping point: the Quality Loop (Step 7) that would
-normally act on `REVIEWING` isn't built yet, so chapters sit there
-readable-but-unreviewed rather than the UI claiming a review happened.
+7. **Quality Loop** — `/api/cron/quality-loop`, same cron pattern, scores
+   the next `written` chapter of the single least-recently-touched
+   `REVIEWING` project against `chapters.quality_score`'s ten dimensions
+   (structure, continuity, readability, instruction_adherence, repetition,
+   pacing, factual_consistency, character_consistency, platform_suitability,
+   completeness — internal assessment only, never shown as a scientific
+   guarantee). Below-threshold chapters get one automatic revision pass
+   (`chapters.revision_count`, bounded so it can never loop forever) and are
+   then approved either way. Once every chapter in a project is `approved`,
+   status moves to `READY_FOR_REVIEW`.
+
+   `job-progress`'s 8-step pipeline only ever marks Blueprint/Writing/Quality
+   as done or active — Research/Cover/Metadata/Compliance/Export stay
+   visually pending no matter the project's status, because none of those
+   are automated yet (Steps 8-10) and marking them "done" would be exactly
+   the kind of fabricated progress the spec explicitly prohibits.
 
 ## Local setup
 
@@ -77,5 +89,5 @@ All in `.env.local` (gitignored, never committed) — see
 
 ## What's next
 
-Step 7 (Quality Loop: score each chapter and trigger revisions), per the
-roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 8 (Research Department + Title/Metadata Risk Check), per the roadmap in
+`InkFrame_Opening_ClaudeCode_Prompt.md`.

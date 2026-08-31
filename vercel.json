@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/writing-agent",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/quality-loop",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

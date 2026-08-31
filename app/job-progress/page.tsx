@@ -7,17 +7,22 @@ import { css, title as pageTitle } from "@/content/job-progress";
 
 export const dynamic = "force-dynamic";
 
+// Only Blueprint, Writing, and Quality are real (Steps 5-7). Research,
+// Cover, Metadata, Compliance, and Export aren't automated yet — they stay
+// visually pending no matter the project's status, rather than ever being
+// marked "done" for work that hasn't actually happened.
 const PIPELINE = [
-  { key: "blueprint", label: "Blueprint", icon: "✓" },
-  { key: "research", label: "Research", icon: "🔎" },
-  { key: "writing", label: "Writing", icon: "✎" },
-  { key: "quality", label: "Quality", icon: "◈" },
-  { key: "cover", label: "Cover", icon: "🎨" },
-  { key: "metadata", label: "Metadata", icon: "▤" },
-  { key: "compliance", label: "Compliance", icon: "✓" },
-  { key: "export", label: "Export", icon: "▦" },
-];
+  { key: "blueprint", label: "Blueprint", icon: "✓", implemented: true },
+  { key: "research", label: "Research", icon: "🔎", implemented: false },
+  { key: "writing", label: "Writing", icon: "✎", implemented: true },
+  { key: "quality", label: "Quality", icon: "◈", implemented: true },
+  { key: "cover", label: "Cover", icon: "🎨", implemented: false },
+  { key: "metadata", label: "Metadata", icon: "▤", implemented: false },
+  { key: "compliance", label: "Compliance", icon: "✓", implemented: false },
+  { key: "export", label: "Export", icon: "▦", implemented: false },
+] as const;
 
+/** Index into PIPELINE among only the implemented stages: blueprint(0)/writing(2)/quality(3). */
 function stageIndexForStatus(status: string): number {
   switch (status) {
     case "IDEA":
@@ -26,27 +31,15 @@ function stageIndexForStatus(status: string): number {
       return -1; // blueprint not yet done
     case "QUEUED":
       return 0; // blueprint done, nothing else started
-    case "RESEARCHING":
-      return 1;
     case "WRITING":
-    case "REVISING":
-      return 2;
+      return 2; // actively drafting chapters
     case "REVIEWING":
-      return 3;
-    case "FORMATTING":
-      return 3;
-    case "GENERATING_COVER":
-      return 4;
-    case "GENERATING_METADATA":
-      return 5;
-    case "COMPLIANCE_CHECK":
-      return 6;
+      return 3; // chapters written, Quality Loop actively scoring/revising
     case "READY_FOR_REVIEW":
     case "USER_APPROVED":
     case "READY_FOR_EXPORT":
-      return 6;
     case "EXPORTED":
-      return 7;
+      return 4; // every chapter written and quality-approved; nothing past that is automated yet
     default:
       return -1;
   }
@@ -56,26 +49,15 @@ function taskTextForStatus(status: string): string {
   switch (status) {
     case "QUEUED":
       return "Queued — waiting for the Writing Agent to start.";
-    case "RESEARCHING":
-      return "Researching your topic/category.";
     case "WRITING":
       return "Writing chapters.";
-    case "REVISING":
-      return "Revising flagged chapters.";
     case "REVIEWING":
-      return "Running the Quality Loop.";
-    case "GENERATING_COVER":
-      return "Designing your cover.";
-    case "GENERATING_METADATA":
-      return "Preparing description, keywords, and categories.";
-    case "COMPLIANCE_CHECK":
-      return "Running compliance checks.";
+      return "Chapters drafted — running the Quality Loop.";
     case "READY_FOR_REVIEW":
     case "USER_APPROVED":
     case "READY_FOR_EXPORT":
-      return "Ready — preparing export files.";
     case "EXPORTED":
-      return "Done — your files are ready.";
+      return "All chapters written and quality-approved. Cover, metadata, and compliance aren't automated yet — you can read the manuscript now.";
     default:
       return "Waiting on the Book Blueprint.";
   }
@@ -197,17 +179,18 @@ function JobProgressBody() {
             </div>
 
             <div className="pipeline">
-              {PIPELINE.map((step, i) => (
-                <div
-                  key={step.key}
-                  className={`pipe-step${i < stageIndex || (i === stageIndex && status === "EXPORTED") ? " done" : ""}${
-                    i === stageIndex && status !== "EXPORTED" ? " active" : ""
-                  }`}
-                >
-                  <div className="pipe-dot">{i <= stageIndex ? "✓" : step.icon}</div>
-                  <div className="pipe-label">{step.label}</div>
-                </div>
-              ))}
+              {PIPELINE.map((step, i) => {
+                // Never mark a not-yet-built stage done/active, no matter what the
+                // index math implies — only Blueprint/Writing/Quality are real.
+                const done = step.implemented && (i < stageIndex || (i === stageIndex && status === "EXPORTED"));
+                const active = step.implemented && i === stageIndex && status !== "EXPORTED";
+                return (
+                  <div key={step.key} className={`pipe-step${done ? " done" : ""}${active ? " active" : ""}`}>
+                    <div className="pipe-dot">{done ? "✓" : step.icon}</div>
+                    <div className="pipe-label">{step.label}</div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="task-row">

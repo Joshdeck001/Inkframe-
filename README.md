@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-7 of the build plan are done:
+Steps 1-8 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -87,7 +87,19 @@ All in `.env.local` (gitignored, never committed) — see
 - **OpenAI / Gemini keys** — not used yet; wired in as the Writing Agent's
   model-routing options are built (Step 6+).
 
+8. **Research Department + Title/Metadata Risk Check** — moving from wizard
+   Step 7 to Step 8 now saves the project (if it hasn't been already) and
+   calls `/api/research`, which flags real title risk
+   (`title_risk_checks` — status is always a risk flag like `no_issue` /
+   `potential_conflict`, never "100% safe" or "guaranteed clear") and
+   researches the book's category for what's already common and how this
+   book could differentiate (`research_notes`, types `title-risk` and
+   `genre`). This is AI-knowledge-based research, not a live scrape of
+   Amazon/GoodNovel/Meganovel — the summary says so rather than implying
+   verified live market data.
+
 ## What's next
 
-Step 8 (Research Department + Title/Metadata Risk Check), per the roadmap in
+Step 9 (Cover Department, Metadata Department, Compliance Department,
+Formatting Department), per the roadmap in
 `InkFrame_Opening_ClaudeCode_Prompt.md`.

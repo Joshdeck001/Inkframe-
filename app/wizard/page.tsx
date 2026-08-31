@@ -96,6 +96,13 @@ export default function WizardPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const [titleRiskStatus, setTitleRiskStatus] = useState<string | null>(null);
+  const [titleRiskNotes, setTitleRiskNotes] = useState<string | null>(null);
+  const [categorySummary, setCategorySummary] = useState<string | null>(null);
+  const [differentiationIdeas, setDifferentiationIdeas] = useState<string[]>([]);
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
+
   const [blueprint, setBlueprint] = useState<BlueprintStructure | null>(null);
   const [blueprintId, setBlueprintId] = useState<string | null>(null);
   const [blueprintVersion, setBlueprintVersion] = useState(0);
@@ -188,6 +195,28 @@ export default function WizardPage() {
     }
   }
 
+  async function generateResearch(pid: string) {
+    setResearchLoading(true);
+    setResearchError(null);
+    try {
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: pid }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Research failed.");
+      setTitleRiskStatus(json.title_risk.status);
+      setTitleRiskNotes(json.title_risk.notes);
+      setCategorySummary(json.category_research.summary);
+      setDifferentiationIdeas(json.category_research.differentiation_ideas ?? []);
+    } catch (e) {
+      setResearchError(e instanceof Error ? e.message : "Research failed.");
+    } finally {
+      setResearchLoading(false);
+    }
+  }
+
   async function generateBlueprint(pid: string) {
     setBlueprintLoading(true);
     setBlueprintError(null);
@@ -258,10 +287,23 @@ export default function WizardPage() {
     });
   }
 
-  async function goStep9() {
+  async function goStep8() {
     setSaveError(null);
     try {
       const pid = await saveProjectRecord();
+      if (!titleRiskStatus) {
+        await generateResearch(pid);
+      }
+      setCurrentStep(8);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not save this project.");
+    }
+  }
+
+  async function goStep9() {
+    setSaveError(null);
+    try {
+      const pid = projectId ?? (await saveProjectRecord());
       if (!blueprint) {
         await generateBlueprint(pid);
       }
@@ -273,12 +315,17 @@ export default function WizardPage() {
 
   async function startWriting() {
     if (!projectId) return;
-    // The autonomous Writing Agent (Step 6) isn't built yet — leave the project
-    // queued and honest about that rather than faking a "writing" progress bar.
+    // Both the Writing Agent (Step 6) and Quality Loop (Step 7) run on a cron
+    // schedule server-side, not from this click — this just sends the user
+    // to watch real progress land.
     router.push(`/job-progress?project=${projectId}`);
   }
 
   function handleNext() {
+    if (currentStep === 7) {
+      goStep8();
+      return;
+    }
     if (currentStep === 8) {
       goStep9();
       return;
@@ -301,7 +348,10 @@ export default function WizardPage() {
   const progressPct = ((currentStep - 1) / (TOTAL_STEPS - 1)) * 100;
   const isLastStep = currentStep === TOTAL_STEPS;
   const nextDisabled =
-    (currentStep === 9 && (blueprintLoading || !blueprint || !blueprintApproved)) || saving;
+    (currentStep === 9 && (blueprintLoading || !blueprint || !blueprintApproved)) ||
+    (currentStep === 7 && researchLoading) ||
+    (currentStep === 8 && blueprintLoading) ||
+    saving;
 
   return (
     <>
@@ -709,21 +759,55 @@ export default function WizardPage() {
           <div className="step active">
             <div className="step-title">Research &amp; risk check</div>
             <div className="step-sub">InkFrame checks your title and researches your topic before writing begins.</div>
-            <div className="blueprint-box">
-              <h3>Title Check</h3>
-              <div className="risk-badge ok">✓ No significant issue detected</div>
-              <p className="hint" style={{ marginTop: "10px" }}>
-                This is a risk assessment, not a legal guarantee. InkFrame flags potential conflicts — always
-                use your own judgment for final clearance.
-              </p>
-            </div>
-            <div className="blueprint-box">
-              <h3>Category Research</h3>
-              <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.6 }}>
-                InkFrame will scan comparable titles in your category to identify content gaps, then report
-                what this book can do differently before writing begins.
-              </p>
-            </div>
+
+            {researchLoading && (
+              <div className="blueprint-box" style={{ textAlign: "center", padding: "30px 20px" }}>
+                Checking your title and researching the category…
+              </div>
+            )}
+
+            {researchError && (
+              <div className="blueprint-box">
+                <p style={{ color: "var(--red)", fontSize: "13px", marginBottom: "10px" }}>{researchError}</p>
+                <div className="pill-row">
+                  <div
+                    className="pill"
+                    style={{ borderColor: "var(--redGlow)" }}
+                    onClick={() => projectId && generateResearch(projectId)}
+                  >
+                    ↻ Try Again
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {titleRiskStatus && !researchLoading && (
+              <>
+                <div className="blueprint-box">
+                  <h3>Title Check</h3>
+                  <div className={`risk-badge ${titleRiskStatus === "no_issue" ? "ok" : "warn"}`}>
+                    {titleRiskStatus === "no_issue" ? "✓ No significant issue detected" : "⚠ " + titleRiskStatus.replace(/_/g, " ")}
+                  </div>
+                  <p className="hint" style={{ marginTop: "10px" }}>{titleRiskNotes}</p>
+                  <p className="hint">
+                    This is a risk assessment, not a legal guarantee. InkFrame flags potential conflicts — always
+                    use your own judgment for final clearance.
+                  </p>
+                </div>
+                <div className="blueprint-box">
+                  <h3>Category Research</h3>
+                  <p style={{ fontSize: "13px", color: "var(--muted)", lineHeight: 1.6 }}>{categorySummary}</p>
+                  {differentiationIdeas.length > 0 && (
+                    <ul style={{ marginTop: "10px", paddingLeft: "18px", fontSize: "13px", color: "var(--muted)", lineHeight: 1.7 }}>
+                      {differentiationIdeas.map((idea, i) => (
+                        <li key={i}>{idea}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+
             {saveError && <p style={{ color: "var(--red)", fontSize: "13px" }}>{saveError}</p>}
           </div>
         )}
@@ -876,7 +960,7 @@ export default function WizardPage() {
           ← Back
         </button>
         <button className="btn btn-next" onClick={handleNext} disabled={nextDisabled}>
-          {saving || (currentStep === 8 && blueprintLoading)
+          {saving || (currentStep === 7 && researchLoading) || (currentStep === 8 && blueprintLoading)
             ? "Saving…"
             : isLastStep
             ? "＋ Start Writing"

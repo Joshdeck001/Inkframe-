@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-9 of the build plan are done:
+Steps 1-10 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -128,7 +128,26 @@ All in `.env.local` (gitignored, never committed) — see
    compliance results inline, plus a working "Download Manuscript (DOCX)"
    button.
 
+10. **Final Quality Gate** — folded into the Formatting Department's tick
+    (it's the last of the Step 9 departments to run, right before
+    `READY_FOR_REVIEW`), `computeQualityGate` in `lib/quality-gate.ts` is a
+    deterministic summary of what Steps 5-9 already produced — content,
+    structure, continuity (currently just checks chapter numbering has no
+    gaps — the real story_bible-driven Continuity Engine isn't built),
+    word count, images, metadata, platform, formatting, and cover checks,
+    plus an `overall_readiness_score` (0-100, explicitly an internal
+    assessment, never a platform-acceptance guarantee). `publish.html`'s
+    checklist now reads this real data instead of seven hardcoded "✓
+    Ready" rows — where InkFrame genuinely doesn't have something yet
+    (paperback interior/cover PDFs, pricing), it says so rather than
+    faking a checkmark. The platform-picker/prepared-fields/"I've
+    Published This" flow below the checklist is still the original static
+    demo — that's Step 13 (Publishing Engine), not this step.
+
 ## What's next
 
-Step 10 (Final Quality Gate + Export Center), per the roadmap in
-`InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 11 (Admin Panel) or Step 12 (Translation Department) — both need
+pages that weren't included in what you've sent so far, so they're worth
+a check-in before I build UI you haven't approved. Step 13 (Publishing
+Engine) reuses `publish.html`, already ported, so that one's ready to pick
+up directly. See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

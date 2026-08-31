@@ -356,9 +356,14 @@ function JobProgressBody() {
             Back to Dashboard
           </button>
           {isReady ? (
-            <button className="btn btn-primary" onClick={handleDownload} disabled={downloadState === "loading"}>
-              {downloadState === "loading" ? "Preparing download…" : "Download Manuscript (DOCX)"}
-            </button>
+            <>
+              <button className="btn btn-secondary" onClick={handleDownload} disabled={downloadState === "loading"}>
+                {downloadState === "loading" ? "Preparing…" : "Download (DOCX)"}
+              </button>
+              <button className="btn btn-primary" onClick={() => router.push(`/publish?project=${projectId}`)}>
+                Continue to Publish →
+              </button>
+            </>
           ) : (
             <button
               className="btn btn-primary"

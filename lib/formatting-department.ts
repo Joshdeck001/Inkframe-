@@ -1,5 +1,6 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } from "docx";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeQualityGate } from "@/lib/quality-gate";
 
 /**
  * Assembles the approved manuscript into a DOCX file and stores it in the
@@ -85,9 +86,16 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       file_ref: path,
     });
 
+    // Final Quality Gate (Step 10) — a deterministic summary of everything
+    // Steps 5-9 already produced, computed now that every input exists.
+    const gate = await computeQualityGate(supabase, project.id);
+
     await supabase.from("projects").update({ status: "READY_FOR_REVIEW" }).eq("id", project.id);
 
-    return { processed: true, detail: `Project ${project.id}: manuscript.docx generated, moved to READY_FOR_REVIEW.` };
+    return {
+      processed: true,
+      detail: `Project ${project.id}: manuscript.docx generated, quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
+    };
   } catch (e) {
     await supabase.from("formatting_jobs").update({ status: "failed" }).eq("id", formattingJob.id);
     throw e;

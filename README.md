@@ -146,8 +146,9 @@ All in `.env.local` (gitignored, never committed) — see
 
 ## What's next
 
-Step 11 (Admin Panel) or Step 12 (Translation Department) — both need
-pages that weren't included in what you've sent so far, so they're worth
-a check-in before I build UI you haven't approved. Step 13 (Publishing
-Engine) reuses `publish.html`, already ported, so that one's ready to pick
-up directly. See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 13 (Publishing Engine) reuses `publish.html`, already ported — ready
+to pick up directly, same for Step 12 (Translation, `translate.html`) and
+Step 15 (Advertising, `advertising.html`). Step 11 (Admin Panel) is the
+one that genuinely has no provided mockup, so that's worth a check-in
+before building new UI. See the roadmap in
+`InkFrame_Opening_ClaudeCode_Prompt.md`.

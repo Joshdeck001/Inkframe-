@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-10, 12, and 13 of the build plan are done:
+Steps 1-10, 12, 13, and 15 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -183,10 +183,27 @@ All in `.env.local` (gitignored, never committed) — see
     is fully real and reachable by API, just not surfaced in the dashboard
     UI yet.
 
+15. **Advertising Department** — `advertising.html` is real now (the
+    Overview tab's actual content; the other five tabs were always
+    decorative labels in the approved page, no change there). The stat
+    grid computes real totals from `advertising_metrics` — `lib/advertising-metrics.ts`
+    centralizes the zero/null-safe ACOS/ROAS math the schema requires
+    ("Not available" when nothing's been imported, "Cannot be calculated
+    from available data" instead of NaN/Infinity, never a zero-filled
+    guess). "Advertise a Book" opens a picker over your projects; picking
+    one calls `/api/advertising/generate`, which pulls the project's own
+    title/description/metadata (never re-asks) and asks Claude for a
+    keyword list across all six groups plus one starter campaign — saved
+    to `advertising_projects`/`advertising_campaigns`/`advertising_keywords`,
+    plus a budget suggestion as an `advertising_recommendations` row
+    (`daily_budget` itself stays null — a suggestion, never auto-set).
+    "Import Ad Data" parses a real CSV into `advertising_metrics`
+    (`source: csv_import`). Nothing here ever logs into or touches a real
+    Amazon Advertising account.
+
 ## What's next
 
-Step 15 (Advertising, `advertising.html`) reuses a page that's already
-ported — ready to pick up directly. Step 11 (Admin Panel) and Step 14 (AI
-Copilot's real backend — its UI shell already exists on the dashboard) are
-the two without a fully separate provided mockup, worth a check-in first.
-See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 11 (Admin Panel) and Step 14 (AI Copilot's real backend — its UI
+shell already exists on the dashboard) are what's left, and neither has a
+fully separate provided mockup, so they're worth a check-in before
+building new UI. See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

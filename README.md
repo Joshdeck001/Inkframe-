@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-10 and Step 13 of the build plan are done:
+Steps 1-10, 12, and 13 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -161,11 +161,32 @@ All in `.env.local` (gitignored, never committed) — see
     prepare-and-handoff flow exactly as specced, just with real data
     instead of the static demo.
 
+12. **Translation Department** — `translate.html` is fully real: "Select
+    recent project" queries your actual projects; "Upload manuscript"
+    uploads straight to a new private `uploads` bucket
+    (`0005_uploads_bucket.sql`, with real client-side RLS this time —
+    unlike `exports`, the browser uploads directly here, so it needs
+    owner-scoped insert/select/delete policies keyed off the
+    `{user_id}/...` path prefix). Starting a job writes a real
+    `translation_jobs` row.
+
+    `/api/cron/translation-department` (same cron pattern) advances one
+    unit of work per tick — one chapter for an existing project, or one
+    ~2500-word chunk of an uploaded manuscript — translating title/
+    subtitle/description first, then the body, then assembling a real
+    `.docx` per language once every unit is done (uploaded PDF/EPUB
+    aren't supported yet — only DOCX text extraction is implemented, via
+    `mammoth`; those jobs mark `failed` honestly instead of hanging).
+    `/api/translation-download` hands back a signed URL the same way
+    `/api/export-download` does. There's no dedicated "my translations"
+    results page yet since none was in the approved mockups — the pipeline
+    is fully real and reachable by API, just not surfaced in the dashboard
+    UI yet.
+
 ## What's next
 
-Step 12 (Translation, `translate.html`) and Step 15 (Advertising,
-`advertising.html`) both reuse pages that are already ported — ready to
-pick up directly. Step 11 (Admin Panel) and Step 14 (AI Copilot's real
-backend — its UI shell already exists on the dashboard) are the two
-without a fully separate provided mockup, worth a check-in first. See the
-roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 15 (Advertising, `advertising.html`) reuses a page that's already
+ported — ready to pick up directly. Step 11 (Admin Panel) and Step 14 (AI
+Copilot's real backend — its UI shell already exists on the dashboard) are
+the two without a fully separate provided mockup, worth a check-in first.
+See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

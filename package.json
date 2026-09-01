@@ -15,7 +15,8 @@
     "@supabase/supabase-js": "^2.45.4",
     "@supabase/ssr": "^0.5.1",
     "@anthropic-ai/sdk": "^0.27.3",
-    "docx": "^9.1.1"
+    "docx": "^9.1.1",
+    "mammoth": "^1.12.2"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

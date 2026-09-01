@@ -19,6 +19,10 @@
    - `supabase/migrations/0004_publishing_jobs_unique.sql` — one
      `publishing_jobs` row per project+platform, so re-selecting a
      platform in the Publishing Engine refreshes it instead of duplicating.
+   - `supabase/migrations/0005_uploads_bucket.sql` — a private `uploads`
+     bucket for manuscripts uploaded to the Translation Department, with
+     real storage.objects RLS (unlike `exports`, the browser uploads here
+     directly as the signed-in user).
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

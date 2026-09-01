@@ -353,6 +353,49 @@ low on time for that turn). Run `npm run test:plan-tier` any time to
 re-check this yourself — it doesn't need your Vercel site or database to
 be running, it checks the on/off logic directly.
 
+## Admin approval for new sign-ups
+
+Signing up no longer means you're in. Every new account starts as
+`profiles.approval_status = 'pending'` (migration
+`0007_account_approval.sql`) and can't reach a single protected page or
+API route until an admin approves it — this was the biggest real gap in
+the project before: anyone who found the sign-up page could create an
+account and immediately start burning real Anthropic API spend, with no
+gate at all. Now:
+
+- **Page-level gate** — `lib/supabase/middleware.ts` checks
+  `approval_status` on every protected-route request (same place the
+  signed-in check already lived) and redirects anyone who isn't
+  `'approved'` to `/pending-approval`, a small honest waiting-room page
+  ("an admin needs to approve your account") with a **Check Again** button
+  and **Sign Out**.
+- **API-level gate, not just the page redirect** — a valid session cookie
+  would otherwise still let a pending account call an API route directly,
+  bypassing the page gate entirely. `lib/require-approved-user.ts` is the
+  same check, dropped into every route that costs money or touches real
+  data: `/api/blueprint`, `/api/research`, `/api/advertising/generate`,
+  `/api/export-download`, `/api/translation-download`, and both handlers
+  of `/api/copilot/message`.
+- **Fails closed** — both checks treat a missing or unreadable profile row
+  as "not approved," never as "let them through."
+- **Existing accounts are grandfathered in.** The migration sets
+  `approval_status = 'approved'` for every row that already exists at the
+  moment it runs, so applying it to your live project never locks out
+  people who were already using the app — only sign-ups from that point
+  on start `'pending'`. See the updated bootstrap SQL in
+  `supabase/README.md` — promoting yourself to admin now sets
+  `approval_status = 'approved'` in the same statement, since otherwise
+  you'd promote yourself to admin while still being gated out yourself
+  with no other admin around to approve you.
+- **Approving people happens in the Admin Panel's Users tab** (`/admin`) —
+  pending accounts sort to the top, with **Approve**/**Reject** buttons.
+  Both call a single Postgres function, `admin_set_approval()`
+  (`security definer`, checks the caller is an admin internally via
+  `auth.uid()`), rather than a broad `UPDATE` policy on `profiles` — kept
+  deliberately narrow so it can never be used to change `role` too. Role
+  changes stay exactly as impossible through the app as before this
+  change; this only ever touches `approval_status`.
+
 ## Dashboard sidebar — every item now goes somewhere
 
 The dashboard's sidebar originally had 11 nav items and a notification
@@ -365,7 +408,15 @@ real, reusing the same visual language as the 8 approved pages
   (`/formatter`), **Research** (`/research`), **Metadata** (`/metadata`),
   **Compliance Check** (`/compliance`) — real data per project
   (`lib/useMyProjects.ts` + `lib/ProjectPicker.tsx` are shared across the
-  project-scoped ones).
+  project-scoped ones). My Books also has a real **Delete** button per book
+  (with a confirm dialog) — there was previously no way to remove a project
+  once you'd started it, even an abandoned one-chapter draft. Deleting
+  really deletes: the row and everything that cascades from it (chapters,
+  blueprint, metadata, compliance checks, formatting jobs — every child
+  table's foreign key is `on delete cascade`). It does not clean up files
+  already sitting in the private `exports`/`uploads` storage buckets, since
+  that needs the service-role client and felt like more risk than this
+  pass called for — worth doing later if storage costs ever matter.
 - **Settings** (`/settings`) — real name/password changes, sign out.
 - **Help & Support** (`/help`) — static FAQ.
 - **Templates** and **Images** — honestly labeled "not built yet" rather

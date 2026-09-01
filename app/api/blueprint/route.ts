@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { requireApprovedUser } from "@/lib/require-approved-user";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
@@ -50,11 +51,9 @@ export async function POST(request: Request) {
 
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
   if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+    return NextResponse.json({ error: authError }, { status: authStatus });
   }
 
   const [{ data: project }, { data: identity }, { data: audience }, { data: scope }, { data: style }, { data: platform }] =

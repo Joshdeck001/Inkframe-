@@ -28,6 +28,12 @@
      create a session" call is a true upsert and `production_paused` has
      one unambiguous value per project for the background cron ticks to
      check.
+   - `supabase/migrations/0007_account_approval.sql` — adds
+     `profiles.approval_status` (an admin has to approve a new sign-up
+     before it can use InkFrame at all) and grandfathers in every account
+     that already existed before this migration runs, so running it never
+     locks you out of your own project. See "Admin approval for new
+     sign-ups" in the root `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked
@@ -37,11 +43,14 @@
    no sidebar link to it, go there directly by URL once you're an admin):
    after you've signed up once through the app, run this in the SQL editor
    (`profiles.role` is intentionally not editable through the app itself, in
-   the Admin Panel included — see its Users tab):
+   the Admin Panel included — see its Users tab). Set `approval_status` in
+   the same statement — otherwise you'd promote yourself to admin while
+   still being gated out as a pending account with no other admin around to
+   approve you:
 
    ```sql
-   update public.profiles set role = 'admin' where id =
-     (select id from auth.users where email = 'you@example.com');
+   update public.profiles set role = 'admin', approval_status = 'approved'
+   where id = (select id from auth.users where email = 'you@example.com');
    ```
 
 No table in this schema is ever written to by anything other than the

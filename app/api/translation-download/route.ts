@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { requireApprovedUser } from "@/lib/require-approved-user";
 
 export const dynamic = "force-dynamic";
 
@@ -19,10 +20,8 @@ export async function GET(request: Request) {
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
+  if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
   const service = createServiceClient();
   const { data: job } = await service

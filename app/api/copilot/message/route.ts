@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { requireApprovedUser } from "@/lib/require-approved-user";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -37,10 +38,8 @@ export async function GET(request: Request) {
   if (!projectId) return NextResponse.json({ error: "project_id is required" }, { status: 400 });
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
+  if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
   const { data: session } = await supabase
     .from("copilot_sessions")
@@ -69,10 +68,8 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
+  if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
   const { data: project } = await supabase
     .from("projects")

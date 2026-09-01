@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { requireApprovedUser } from "@/lib/require-approved-user";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby plan's ceiling
@@ -52,10 +53,8 @@ export async function POST(request: Request) {
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 });
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
+  if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
   const [{ data: project }, { data: identity }, { data: metadata }] = await Promise.all([
     supabase.from("projects").select("book_type").eq("id", project_id).single(),

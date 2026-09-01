@@ -61,6 +61,31 @@ label { display:block; font-size:12.5px; font-weight:600; margin-bottom:6px; col
 .field input { width:100%; background:#0d1626; border:1px solid var(--border);
   border-radius:10px; padding:11px 14px; color:#fff; font-size:13.5px; outline:none; font-family:inherit; }
 .field input:focus { border-color:var(--blueGlow); box-shadow:0 0 0 3px rgba(76,139,255,.18); }
+.field textarea, .field select { width:100%; background:#0d1626; border:1px solid var(--border);
+  border-radius:10px; padding:11px 14px; color:#fff; font-size:13.5px; outline:none; font-family:inherit; }
+.field textarea { resize:vertical; min-height:80px; }
+.field textarea.mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; min-height:120px; }
+.field textarea:focus, .field select:focus { border-color:var(--blueGlow); box-shadow:0 0 0 3px rgba(76,139,255,.18); }
+.field .field-error { color:var(--redGlow); font-size:11.5px; margin-top:6px; }
+.field-checkbox { display:flex; align-items:center; gap:8px; margin-bottom:18px; font-size:13px; }
+.field-checkbox input { width:auto; }
+
+.tabs { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:0; }
+.tab-btn { background:none; border:none; color:var(--muted); font-weight:700; font-size:13px; padding:10px 4px;
+  cursor:pointer; border-bottom:2px solid transparent; margin-right:18px; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--blueGlow); }
+
+.badge { display:inline-block; padding:3px 9px; border-radius:999px; font-size:10.5px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.02em; }
+.badge.admin { background:rgba(255,85,102,.15); color:var(--redGlow); }
+.badge.user { background:rgba(255,255,255,.06); color:var(--muted); }
+.badge.locked { background:rgba(255,255,255,.06); color:var(--muted); }
+.badge.active { background:rgba(95,227,184,.15); color:#5fe3b8; }
+
+table.admin-table { width:100%; border-collapse:collapse; font-size:13px; }
+table.admin-table th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase;
+  letter-spacing:.03em; padding:8px 10px; border-bottom:1px solid var(--border); }
+table.admin-table td { padding:10px; border-bottom:1px solid var(--border); vertical-align:top; }
 
 @media (max-width:640px) { .wrap { padding:24px 16px 40px; } }
 `;

@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-10 and 12-15 of the build plan are done:
+Steps 1-15 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -240,6 +240,39 @@ All in `.env.local` (gitignored, never committed) — see
       advertising platform through the Copilot — same prepare-and-handoff
       rule as everywhere else in the app.
 
+11. **Admin Panel** — `/admin`, gated by `profiles.role === 'admin'` (there's no
+    sidebar link for it, same as the promote-yourself instructions in
+    `supabase/README.md` — go there directly once you're an admin). It has
+    no approved mockup, so it reuses the same shared design system as the
+    other unmocked pages (`content/shared-secondary.css.ts`, extended with
+    tabs/textarea/select/table styling — same tokens, no new visual
+    language) rather than inventing a new one. Four tabs, all backed by real
+    tables:
+
+    - **Site Content** — full CRUD on `site_content` (the landing/auth/
+      dashboard/wizard/job-progress CMS fields), filterable by page. A
+      `locked` row is genuinely uneditable in the UI (its Save/Delete
+      buttons are disabled) — the same rule the database's own RLS policies
+      already enforce (`not locked and ... role = 'admin'`), so nothing here
+      can bypass what the schema already guarantees.
+    - **Platform Profiles** — edit KDP/GoodNovel/Meganovel (or add a new
+      platform), including the six JSON rule fields
+      (`submission_requirements`, `content_rules`, `metadata_rules`,
+      `formatting_rules`, `image_rules`, `contract_submission_rules`) as
+      validated JSON textareas — a save is rejected with an inline error
+      before it ever reaches the database if the JSON doesn't parse.
+    - **Genre Taxonomy** — add/edit genres per platform, including parent
+      genre and the trope add-on JSON content, same validate-before-save
+      pattern.
+    - **Users** — read-only, via `/api/admin/users` (server route, checks
+      the caller is an admin, then uses the service-role client's
+      `auth.admin.listUsers()` — the only way to list users at all, since
+      `auth.users` isn't reachable from the browser). Shows email, role,
+      join date, and real project count. **No role editor anywhere** — the
+      schema's own comment on `profiles.role` says role changes are
+      deliberately not exposed through the app's API, only from the
+      Supabase dashboard directly, and the Admin Panel honors that.
+
 ## Deploying on Vercel's free (Hobby) plan
 
 Hobby caps cron jobs at 2, running at most once a day, and function
@@ -345,6 +378,10 @@ real, reusing the same visual language as the 8 approved pages
 
 ## What's next
 
-Step 11 (Admin Panel) is what's left. It has no approved mockup, so it's
-worth a check-in on what it should look like before building new UI. See
-the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+All 15 steps of the original build plan are done. What's left is mostly
+things that need a real account to verify (confirm the Admin Panel and AI
+Copilot behave as expected against your live Supabase project) or genuine
+product decisions rather than more scaffolding — e.g. wiring an actual
+image-generation API for the Cover Department, or building the Templates
+feature that's currently honestly labeled "not built yet." See the roadmap
+in `InkFrame_Opening_ClaudeCode_Prompt.md` for anything not covered above.

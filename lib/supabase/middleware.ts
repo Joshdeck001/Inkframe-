@@ -16,6 +16,7 @@ const PROTECTED_PREFIXES = [
   "/research",
   "/metadata",
   "/compliance",
+  "/admin",
 ];
 
 export async function updateSession(request: NextRequest) {

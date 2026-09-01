@@ -33,9 +33,11 @@
    file's contents in order, and run it. If you have the Supabase CLI linked
    to the project instead, `supabase db push` picks up both files from this
    folder automatically.
-3. To make yourself an admin (needed later for the Admin Panel, Step 11):
+3. To make yourself an admin (needed for the Admin Panel at `/admin` — there's
+   no sidebar link to it, go there directly by URL once you're an admin):
    after you've signed up once through the app, run this in the SQL editor
-   (`profiles.role` is intentionally not editable through the app itself):
+   (`profiles.role` is intentionally not editable through the app itself, in
+   the Admin Panel included — see its Users tab):
 
    ```sql
    update public.profiles set role = 'admin' where id =

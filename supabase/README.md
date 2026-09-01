@@ -34,6 +34,11 @@
      that already existed before this migration runs, so running it never
      locks you out of your own project. See "Admin approval for new
      sign-ups" in the root `README.md`.
+   - `supabase/migrations/0008_avatars_bucket.sql` — a public `avatars`
+     bucket for profile pictures (`/settings`). Public on purpose, unlike
+     `exports`/`uploads`: avatars need to render directly as `<img src>`
+     without a signed URL. Writes are still owner-scoped, one folder per
+     user, same `storage.objects` RLS pattern as `0005_uploads_bucket.sql`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

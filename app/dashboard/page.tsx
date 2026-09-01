@@ -88,10 +88,12 @@ export default function DashboardPage() {
   ]);
 
   const [displayName, setDisplayName] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [exportCount, setExportCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
   const [bellOpen, setBellOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   useEffect(() => {
     document.title = title;
@@ -110,7 +112,10 @@ export default function DashboardPage() {
         (user.user_metadata?.full_name as string | undefined)?.trim() ||
         user.email?.split("@")[0] ||
         "there";
-      if (!cancelled) setDisplayName(name);
+      if (!cancelled) {
+        setDisplayName(name);
+        setAvatarUrl((user.user_metadata?.avatar_url as string | undefined) ?? null);
+      }
 
       const { data: projectRows } = await supabase
         .from("projects")
@@ -369,7 +374,16 @@ export default function DashboardPage() {
           </div>
 
           <div className="sidebar-footer" onClick={handleSignOut} style={{ cursor: "pointer" }} title="Sign out">
-            <div className="avatar-sm">{displayName ? displayName[0].toUpperCase() : "?"}</div>
+            <div className="avatar-sm" style={{ overflow: "hidden" }}>
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : displayName ? (
+                displayName[0].toUpperCase()
+              ) : (
+                "?"
+              )}
+            </div>
             <div>
               <div className="name">{displayName || "Loading…"}</div>
               <div className="plan">Sign out</div>
@@ -430,9 +444,54 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-              <div className="profile" onClick={handleSignOut} style={{ cursor: "pointer" }}>
-                <div className="avatar-top">{displayName ? displayName[0].toUpperCase() : "?"}</div>{" "}
+              <div className="profile" style={{ cursor: "pointer", position: "relative" }} onClick={() => setProfileMenuOpen((v) => !v)}>
+                <div className="avatar-top" style={{ overflow: "hidden" }}>
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : displayName ? (
+                    displayName[0].toUpperCase()
+                  ) : (
+                    "?"
+                  )}
+                </div>{" "}
                 {displayName || "Loading…"} ⌄
+                {profileMenuOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "42px",
+                      right: 0,
+                      width: "200px",
+                      background: "var(--panel)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "12px",
+                      padding: "6px",
+                      boxShadow: "0 24px 48px -20px rgba(0,0,0,.6)",
+                      zIndex: 50,
+                    }}
+                  >
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setProfileMenuOpen(false);
+                        router.push("/settings");
+                      }}
+                      style={{ fontSize: "13px", padding: "9px 10px", borderRadius: "8px", cursor: "pointer" }}
+                    >
+                      🖼 Change Profile Picture
+                    </div>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSignOut();
+                      }}
+                      style={{ fontSize: "13px", padding: "9px 10px", borderRadius: "8px", cursor: "pointer" }}
+                    >
+                      ⏻ Sign Out
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </header>

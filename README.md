@@ -276,15 +276,22 @@ All in `.env.local` (gitignored, never committed) — see
 ## Deploying on Vercel's free (Hobby) plan
 
 Hobby caps cron jobs at 2, running at most once a day, and function
-duration at ~60s. The 7 department cron routes now run as one consolidated
-job (`/api/cron/all`, scheduled daily in `vercel.json`) instead of 7
-separate 5-minute jobs — `lib/run-all-departments.ts` runs each
-department's tick in sequence within a time budget. Every route's
-`maxDuration` is capped at 60. The individual `/api/cron/<name>` routes
-still exist and work the same way (same `Bearer $CRON_SECRET` auth) — call
-them directly for local testing, or register them individually in
-`vercel.json` instead of `/api/cron/all` if the project moves to a plan
-without Hobby's cron limits, for much faster (every-5-minutes) progress.
+duration at ~60s. The 7 department cron routes run as one consolidated job
+(`/api/cron/all`) instead of 7 separate ones — `lib/run-all-departments.ts`
+runs each department's tick in sequence within a time budget. Every
+route's `maxDuration` is capped at 60. The individual `/api/cron/<name>`
+routes still exist and work the same way (same `Bearer $CRON_SECRET`
+auth) — call them directly for local testing.
+
+**This project is currently running on Vercel Pro**, so `vercel.json`'s
+schedule for `/api/cron/all` has already been changed from Hobby's
+required `"0 6 * * *"` (once a day) to `"*/5 * * * *"` (every 5 minutes) —
+Pro removes the once-a-day limit, so this is safe. Combined with
+`PLAN_TIER=pro` (up to 8 rounds of work per wake-up instead of 1), that's
+the "very active" background AI the site is configured for now. If this
+project is ever downgraded back to Hobby, that schedule string needs to
+change back to `"0 6 * * *"` (or any once-a-day cron expression) or
+deploys will fail Hobby's cron validation.
 
 ## How to Upgrade to Vercel Pro Later
 
@@ -323,28 +330,22 @@ until you do:**
   through the pipeline roughly eight times faster, chapter for chapter.
 
 - **How often it wakes up:** This is the one part `PLAN_TIER` does **not**
-  change, and it's worth being upfront about why: Vercel's free plan only
-  allows background jobs to wake up **once per day**, and that's a rule
-  set by Vercel itself, not something a setting inside the app can
-  override — no environment variable can make Vercel's free plan check in
-  more often than once a day. So on `free`, once a day InkFrame does 1
-  round of work; on `pro`, once a day it does up to 8 rounds of work in a
-  row. Either way, it's still just once a day *waking up* — `pro` makes
-  each wake-up do much more, not happen more often.
+  change — it's controlled entirely by the `schedule` string in
+  `vercel.json`, which Vercel evaluates against the account's real plan.
+  On Vercel's free Hobby plan this can be at most once a day; upgrading
+  Vercel itself (not just `PLAN_TIER`) is what actually removes that
+  limit. **This project has already been upgraded and reconfigured**:
+  `vercel.json` now checks in every 5 minutes instead of once a day (see
+  "Deploying on Vercel's free (Hobby) plan" above) — that was the one
+  genuine code change on this list, made once, and doesn't need repeating
+  as `PLAN_TIER` gets flipped between `free` and `pro` going forward.
 
-  If you want it checking in more often than once a day (not just doing
-  more per check-in), there are two ways to get that, for later:
-  - If you upgrade your actual Vercel account to a paid plan, that
-    removes the once-a-day limit — but making InkFrame use a shorter
-    interval still means editing one line in a file called
-    `vercel.json`, which is a small code change (the one thing on this
-    list that isn't just a dashboard setting).
-  - Or, at any time, on any Vercel plan, free included: use a free
-    third-party scheduling website (for example cron-job.org) to "ping"
-    InkFrame as often as you like. No code, no Vercel plan change — you'd
-    just enter InkFrame's web address in that website's own dashboard and
-    tell it how often to visit. Ask if you want help setting this up when
-    the time comes.
+  If you ever want it checking in even more often than every 5 minutes,
+  that's another small edit to the same `schedule` string — or, on any
+  Vercel plan, a free third-party scheduling website (e.g. cron-job.org)
+  can "ping" `/api/cron/all` as often as you like with zero code changes,
+  configured entirely in that website's own dashboard. Ask if you want
+  help setting that up.
 
 **Tested and confirmed working both ways** before this was written —
 `free` runs exactly 1 round per wake-up, `pro` runs up to 8 (and
@@ -417,7 +418,9 @@ real, reusing the same visual language as the 8 approved pages
   already sitting in the private `exports`/`uploads` storage buckets, since
   that needs the service-role client and felt like more risk than this
   pass called for — worth doing later if storage costs ever matter.
-- **Settings** (`/settings`) — real name/password changes, sign out.
+- **Settings** (`/settings`) — real name/password changes, a real profile
+  picture upload (private-per-user-folder, publicly-readable `avatars`
+  bucket — `0008_avatars_bucket.sql`), and sign out.
 - **Help & Support** (`/help`) — static FAQ.
 - **Templates** and **Images** — honestly labeled "not built yet" rather
   than faked, since no template system or image-generation backend
@@ -426,6 +429,16 @@ real, reusing the same visual language as the 8 approved pages
   actually active.
 - The **notification bell** is a real dropdown computed from actual
   project status — no fabricated count.
+- The **topbar profile** (top-right, your name/avatar) used to sign you
+  out the instant you clicked it. It's a real dropdown now — **Change
+  Profile Picture** (jumps to `/settings`) and **Sign Out** as two
+  separate choices — and shows your real uploaded avatar instead of just
+  an initial letter, once you've set one.
+- The **sidebar itself scrolls independently** of the main content now —
+  it previously had no height/overflow rule, so on a shorter screen its
+  lower nav items (Advertising, Publishing, AI Copilot, Templates,
+  Compliance Check, Settings, Help) were unreachable; scrolling just moved
+  the whole page instead of the menu.
 
 ## What's next
 

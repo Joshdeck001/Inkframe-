@@ -13,6 +13,11 @@ export const sharedSecondaryCss = `
   --ink:#f5f6fa; --muted:#8d96ab;
 }
 body { background:var(--bg); color:var(--ink); min-height:100vh; }
+* { scrollbar-width:thin; scrollbar-color:var(--border) var(--bg); }
+*::-webkit-scrollbar { width:8px; height:8px; }
+*::-webkit-scrollbar-track { background:var(--bg); }
+*::-webkit-scrollbar-thumb { background:var(--border); border-radius:8px; }
+*::-webkit-scrollbar-thumb:hover { background:#26406b; }
 header { border-bottom:1px solid var(--border); padding:18px 28px; display:flex; align-items:center; justify-content:space-between; }
 .logo { font-weight:800; font-size:18px; }
 .logo .ink{color:var(--blue)} .logo .frame{color:var(--red)}

@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
+import { generateStructured, generateText, modelUsedLabel, type ToolSpec } from "@/lib/ai-client";
 
 const QUALITY_DIMENSIONS = [
   "structure",
@@ -18,7 +18,7 @@ const QUALITY_DIMENSIONS = [
 const REVISION_THRESHOLD = 70; // average score, 0-100 — internal assessment, not a guarantee
 const MAX_AUTO_REVISIONS = 1; // bounded loop: revise once, then move on regardless of outcome
 
-const SCORE_TOOL = {
+const SCORE_TOOL: ToolSpec = {
   name: "score_chapter",
   description: `Score a chapter on each of: ${QUALITY_DIMENSIONS.join(", ")} (0-100 each), and say whether it needs revision.`,
   input_schema: {
@@ -108,12 +108,7 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
     return { processed: false, detail: `Project ${project.id}: chapters still mid-revision.` };
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not configured on the server.");
-  }
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  const score = await scoreChapter(anthropic, chapter);
+  const score = await scoreChapter(chapter);
   const avg = average(score);
   const passed = avg >= REVISION_THRESHOLD && !score.needs_revision;
   const canRevise = chapter.revision_count < MAX_AUTO_REVISIONS;
@@ -121,16 +116,17 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
   if (!passed && canRevise) {
     await supabase.from("chapters").update({ status: "revising", quality_score: score }).eq("id", chapter.id);
 
-    const revised = await reviseChapter(anthropic, chapter, score.issues);
-    const wordCount = revised.split(/\s+/).filter(Boolean).length;
+    const revised = await reviseChapter(chapter, score.issues);
+    const wordCount = revised.text.split(/\s+/).filter(Boolean).length;
 
     await supabase
       .from("chapters")
       .update({
-        content: revised,
+        content: revised.text,
         actual_words: wordCount,
         status: "approved",
         revision_count: chapter.revision_count + 1,
+        model_used: modelUsedLabel(revised),
       })
       .eq("id", chapter.id);
 
@@ -148,56 +144,33 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
 }
 
 async function scoreChapter(
-  anthropic: Anthropic,
   chapter: { chapter_number: number; title: string; objective: string; content: string }
 ): Promise<QualityScore> {
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 2000,
+  const { output } = await generateStructured<{ scores: Record<string, number>; needs_revision: boolean; issues: string[] }>({
     system:
       "You are InkFrame's Quality Loop. Score this chapter honestly on each dimension (0-100) against its " +
       "stated objective. These scores are an internal assessment only, never presented to the reader as a " +
       "scientific guarantee — be direct about real weaknesses. Call the score_chapter tool with the result.",
-    messages: [
-      {
-        role: "user",
-        content: `Chapter ${chapter.chapter_number}: ${chapter.title}\nObjective: ${chapter.objective}\n\n${chapter.content}`,
-      },
-    ],
-    tools: [SCORE_TOOL],
-    tool_choice: { type: "tool", name: "score_chapter" },
+    userContent: `Chapter ${chapter.chapter_number}: ${chapter.title}\nObjective: ${chapter.objective}\n\n${chapter.content}`,
+    tool: SCORE_TOOL,
+    maxTokens: 2000,
   });
-
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Quality scoring did not return structured output.");
-  }
-  const input = toolUse.input as { scores: Record<string, number>; needs_revision: boolean; issues: string[] };
-  return { ...(input.scores as QualityScore), needs_revision: input.needs_revision, issues: input.issues };
+  return { ...(output.scores as QualityScore), needs_revision: output.needs_revision, issues: output.issues };
 }
 
 async function reviseChapter(
-  anthropic: Anthropic,
   chapter: { chapter_number: number; title: string; objective: string; target_words: number; content: string },
   issues: string[]
-): Promise<string> {
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 8000,
+) {
+  return generateText({
     system:
       "You are InkFrame's Writing Agent revising one chapter to fix specific issues found by the Quality " +
       "Loop, while preserving what already works. Output ONLY the revised chapter's full prose — no heading, " +
       "no meta-commentary, no diff notation.",
-    messages: [
-      {
-        role: "user",
-        content:
-          `Chapter ${chapter.chapter_number}: ${chapter.title}\nObjective: ${chapter.objective}\n` +
-          `Target length: about ${chapter.target_words} words\n\nIssues to fix:\n- ${issues.join("\n- ")}\n\n` +
-          `Current chapter:\n${chapter.content}`,
-      },
-    ],
+    userContent:
+      `Chapter ${chapter.chapter_number}: ${chapter.title}\nObjective: ${chapter.objective}\n` +
+      `Target length: about ${chapter.target_words} words\n\nIssues to fix:\n- ${issues.join("\n- ")}\n\n` +
+      `Current chapter:\n${chapter.content}`,
+    maxTokens: 8000,
   });
-  const textBlock = message.content.find((b) => b.type === "text");
-  return textBlock && textBlock.type === "text" ? textBlock.text.trim() : chapter.content;
 }

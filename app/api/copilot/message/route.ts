@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const RESPOND_TOOL = {
+const RESPOND_TOOL: ToolSpec = {
   name: "respond_to_user",
   description:
     "Classify the author's message about this one book project and draft a short spoken-friendly reply, using only the real project facts given.",
@@ -148,35 +148,31 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: "ANTHROPIC_API_KEY is not configured on the server." }, { status: 500 });
+  let parsed: { intent: Intent; chapter_number: number | null; reply: string };
+  try {
+    const generated = await generateStructured<{ intent: Intent; chapter_number: number | null; reply: string }>({
+      system:
+        "You are InkFrame's AI Copilot, speaking directly to the author about ONE specific book project. Below " +
+        "are the real, current facts about this project from the database — use ONLY these facts, never invent " +
+        "progress, numbers, or chapter content that isn't listed. If something isn't available yet, say so " +
+        "plainly. Classify the author's message into exactly one intent: status_query (asking what's " +
+        "happening/progress), pause_production (asking to pause/stop/hold work), resume_production (asking to " +
+        "resume/continue/unpause), revise_chapter (asking to redo/fix/change a specific chapter — set " +
+        "chapter_number if one was named, else null), or general_question (anything else). Write a short reply " +
+        "(1-4 sentences, safe to read aloud). Never claim InkFrame submits anything to a publishing or " +
+        "advertising platform — it only prepares content for the author to submit themselves.\n\n" +
+        `Project facts:\n${facts}`,
+      userContent: message,
+      tool: RESPOND_TOOL,
+      maxTokens: 500,
+    });
+    parsed = generated.output;
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Copilot did not return structured output." },
+      { status: 502 }
+    );
   }
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  const aiMessage = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 500,
-    system:
-      "You are InkFrame's AI Copilot, speaking directly to the author about ONE specific book project. Below " +
-      "are the real, current facts about this project from the database — use ONLY these facts, never invent " +
-      "progress, numbers, or chapter content that isn't listed. If something isn't available yet, say so " +
-      "plainly. Classify the author's message into exactly one intent: status_query (asking what's " +
-      "happening/progress), pause_production (asking to pause/stop/hold work), resume_production (asking to " +
-      "resume/continue/unpause), revise_chapter (asking to redo/fix/change a specific chapter — set " +
-      "chapter_number if one was named, else null), or general_question (anything else). Write a short reply " +
-      "(1-4 sentences, safe to read aloud). Never claim InkFrame submits anything to a publishing or " +
-      "advertising platform — it only prepares content for the author to submit themselves.\n\n" +
-      `Project facts:\n${facts}`,
-    messages: [{ role: "user", content: message }],
-    tools: [RESPOND_TOOL],
-    tool_choice: { type: "tool", name: "respond_to_user" },
-  });
-
-  const toolUse = aiMessage.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    return NextResponse.json({ error: "Copilot did not return structured output." }, { status: 502 });
-  }
-  const parsed = toolUse.input as { intent: Intent; chapter_number: number | null; reply: string };
 
   let reply = parsed.reply;
   let triggeredAction: string | null = null;

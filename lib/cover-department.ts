@@ -1,8 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 
-const COVER_TOOL = {
+const COVER_TOOL: ToolSpec = {
   name: "generate_cover_concepts",
   description: "Generate 3 distinct cover-art concept prompts for a book, suitable for an image-generation model.",
   input_schema: {
@@ -28,8 +28,9 @@ const COVER_TOOL = {
 
 /**
  * Generates cover concept PROMPTS only — actually rendering artwork needs an
- * image-generation API (OpenAI/Gemini keys aren't wired in yet). Each
- * concept is saved as `proposed` with a null image_ref until that lands.
+ * image-generation model, which is a different capability than the
+ * text/tool-calling fallback chain here. Each concept is saved as
+ * `proposed` with a null image_ref until that lands.
  */
 export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<{
   processed: boolean;
@@ -51,9 +52,6 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
 
   const { data: identity } = await supabase.from("project_identity").select("*").eq("project_id", project.id).single();
 
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured on the server.");
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const facts = [
     `Book type: ${project.book_type}`,
     identity?.working_title ? `Title: ${identity.working_title}` : null,
@@ -63,22 +61,16 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 1500,
+  const { output: result } = await generateStructured<{ concepts: { prompt: string; rationale: string }[] }>({
     system:
       "You are InkFrame's Cover Department. Propose 3 distinct, concrete cover-art concepts for this book " +
       "as image-generation prompts (subject, mood, palette, composition, style) — not vague mood words. " +
       "Call the generate_cover_concepts tool.",
-    messages: [{ role: "user", content: facts }],
-    tools: [COVER_TOOL],
-    tool_choice: { type: "tool", name: "generate_cover_concepts" },
+    userContent: facts,
+    tool: COVER_TOOL,
+    maxTokens: 1500,
   });
 
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Cover concept generation did not return structured output.");
-
-  const result = toolUse.input as { concepts: { prompt: string; rationale: string }[] };
   const concepts = result.concepts.map((c) => ({
     prompt: c.prompt,
     rationale: c.rationale,

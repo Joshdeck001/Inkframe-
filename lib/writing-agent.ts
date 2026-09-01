@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 import { getPausedProjectIds } from "@/lib/production-paused";
+import { generateText, modelUsedLabel } from "@/lib/ai-client";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -83,11 +83,6 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     }
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not configured on the server.");
-  }
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const facts = [
     `Book type: ${project.book_type}`,
     identity?.working_title ? `Title: ${identity.working_title}` : null,
@@ -107,19 +102,17 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 8000,
+  const generated = await generateText({
     system:
       "You are InkFrame's Writing Agent. Write the full prose of ONE chapter given its objective and " +
       "target length, in the specified tone/POV/pacing, continuing naturally from the previous chapter's " +
       "ending when one is given. Output ONLY the chapter's prose — no chapter-number heading, no title " +
       "restatement, no meta-commentary.",
-    messages: [{ role: "user", content: facts }],
+    userContent: facts,
+    maxTokens: 8000,
   });
 
-  const textBlock = message.content.find((b) => b.type === "text");
-  const chapterText = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
+  const chapterText = generated.text;
   const wordCount = chapterText ? chapterText.split(/\s+/).filter(Boolean).length : 0;
 
   await supabase
@@ -128,7 +121,7 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
       content: chapterText,
       actual_words: wordCount,
       status: "written",
-      model_used: "claude-opus-5",
+      model_used: modelUsedLabel(generated),
     })
     .eq("id", nextChapter.id);
 

@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby plan's ceiling — a full blueprint call can take a while
 
-const BLUEPRINT_TOOL = {
+const BLUEPRINT_TOOL: ToolSpec = {
   name: "generate_blueprint",
   description:
     "Produce the Book Blueprint: Parts containing Chapters, each with an objective, key points, and a word allocation. Word allocation is redistributed by chapter importance — chapters do NOT need equal word counts.",
@@ -71,15 +71,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY is not configured on the server." },
-      { status: 500 }
-    );
-  }
-
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const promptFacts = [
     `Book type: ${project.book_type}`,
     identity?.working_title ? `Working title: ${identity.working_title}` : null,
@@ -104,27 +95,27 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 8000,
-    system:
-      "You are InkFrame's Blueprint Department. Given a project's known facts, produce a Book Blueprint: " +
-      "Parts, each containing Chapters with an objective, key points, and a word allocation. Redistribute " +
-      "word allocation by chapter importance — do not force every chapter to the same length. Chapter " +
-      "numbers must be sequential starting at 1 across the whole book. The sum of all chapters' " +
-      "word_allocation should land close to the target total word count when one is given. Call the " +
-      "generate_blueprint tool with the result — do not respond with prose.",
-    messages: [{ role: "user", content: promptFacts || "No details were provided beyond the book type." }],
-    tools: [BLUEPRINT_TOOL],
-    tool_choice: { type: "tool", name: "generate_blueprint" },
-  });
-
-  const toolUse = message.content.find((block) => block.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    return NextResponse.json({ error: "Blueprint generation did not return structured output." }, { status: 502 });
+  let structure: BlueprintStructure;
+  try {
+    const result = await generateStructured<BlueprintStructure>({
+      system:
+        "You are InkFrame's Blueprint Department. Given a project's known facts, produce a Book Blueprint: " +
+        "Parts, each containing Chapters with an objective, key points, and a word allocation. Redistribute " +
+        "word allocation by chapter importance — do not force every chapter to the same length. Chapter " +
+        "numbers must be sequential starting at 1 across the whole book. The sum of all chapters' " +
+        "word_allocation should land close to the target total word count when one is given. Call the " +
+        "generate_blueprint tool with the result — do not respond with prose.",
+      userContent: promptFacts || "No details were provided beyond the book type.",
+      tool: BLUEPRINT_TOOL,
+      maxTokens: 8000,
+    });
+    structure = result.output;
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Blueprint generation did not return structured output." },
+      { status: 502 }
+    );
   }
-
-  const structure = toolUse.input as BlueprintStructure;
 
   const { data: existing } = await supabase
     .from("book_blueprint")

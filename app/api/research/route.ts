@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby plan's ceiling
@@ -15,7 +15,7 @@ const TITLE_RISK_STATUSES = [
   "human_review_recommended",
 ] as const;
 
-const RESEARCH_TOOL = {
+const RESEARCH_TOOL: ToolSpec = {
   name: "assess_book",
   description:
     "Assess a book's working title for risk, and research its category for comparable titles and content gaps.",
@@ -77,11 +77,6 @@ export async function POST(request: Request) {
 
   const title = identity?.working_title?.trim();
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: "ANTHROPIC_API_KEY is not configured on the server." }, { status: 500 });
-  }
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const facts = [
     `Book type: ${project.book_type}`,
     title ? `Working title: ${title}` : "No working title has been chosen yet.",
@@ -90,30 +85,32 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 1500,
-    system:
-      "You are InkFrame's Research Department. Flag genuine title risk (confusingly similar existing " +
-      "titles, trademark concerns, generic/non-distinctive titles) honestly — this is a risk assessment " +
-      "for the author's own judgment, never a legal guarantee, so never say a title is '100% safe' or " +
-      "'guaranteed clear'. If no working title was given yet, use status 'no_issue' with a note that there " +
-      "is nothing to check yet. Then research what's already common in this book's category from general " +
-      "market knowledge (not live data) and suggest concrete differentiation. Call the assess_book tool.",
-    messages: [{ role: "user", content: facts }],
-    tools: [RESEARCH_TOOL],
-    tool_choice: { type: "tool", name: "assess_book" },
-  });
-
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    return NextResponse.json({ error: "Research did not return structured output." }, { status: 502 });
-  }
-
-  const result = toolUse.input as {
+  type ResearchResult = {
     title_risk: { status: (typeof TITLE_RISK_STATUSES)[number]; notes: string };
     category_research: { summary: string; differentiation_ideas: string[] };
   };
+
+  let result: ResearchResult;
+  try {
+    const generated = await generateStructured<ResearchResult>({
+      system:
+        "You are InkFrame's Research Department. Flag genuine title risk (confusingly similar existing " +
+        "titles, trademark concerns, generic/non-distinctive titles) honestly — this is a risk assessment " +
+        "for the author's own judgment, never a legal guarantee, so never say a title is '100% safe' or " +
+        "'guaranteed clear'. If no working title was given yet, use status 'no_issue' with a note that there " +
+        "is nothing to check yet. Then research what's already common in this book's category from general " +
+        "market knowledge (not live data) and suggest concrete differentiation. Call the assess_book tool.",
+      userContent: facts,
+      tool: RESEARCH_TOOL,
+      maxTokens: 1500,
+    });
+    result = generated.output;
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Research did not return structured output." },
+      { status: 502 }
+    );
+  }
 
   await supabase.from("title_risk_checks").insert({
     project_id,

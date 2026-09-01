@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby plan's ceiling
 
-const STRATEGY_TOOL = {
+const STRATEGY_TOOL: ToolSpec = {
   name: "draft_ad_strategy",
   description: "Draft a starting Amazon Ads keyword list and campaign structure for a book — recommendations only, never live account changes.",
   input_schema: {
@@ -63,11 +63,6 @@ export async function POST(request: Request) {
   ]);
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: "ANTHROPIC_API_KEY is not configured on the server." }, { status: 500 });
-  }
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const facts = [
     `Book type: ${project.book_type}`,
     identity?.working_title ? `Title: ${identity.working_title}` : null,
@@ -79,25 +74,7 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 2500,
-    system:
-      "You are InkFrame's Advertising Department, planning an Amazon Ads strategy for a book that already " +
-      "exists — everything you need is given below, never ask for more. Produce a mixed keyword list " +
-      "(primary/long_tail/buyer_intent/competitor_product_targeting/experimental, plus a couple of negative " +
-      "keywords to exclude) and one starter campaign. Everything you produce is a recommendation for the " +
-      "author to review, never a live account change. Call the draft_ad_strategy tool.",
-    messages: [{ role: "user", content: facts || "No metadata generated yet — use the title/subtitle only." }],
-    tools: [STRATEGY_TOOL],
-    tool_choice: { type: "tool", name: "draft_ad_strategy" },
-  });
-
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    return NextResponse.json({ error: "Strategy generation did not return structured output." }, { status: 502 });
-  }
-  const result = toolUse.input as {
+  type StrategyResult = {
     keywords: { keyword: string; group: string; rationale: string }[];
     campaign: {
       campaign_name: string;
@@ -107,6 +84,27 @@ export async function POST(request: Request) {
       suggested_daily_budget: number;
     };
   };
+
+  let result: StrategyResult;
+  try {
+    const generated = await generateStructured<StrategyResult>({
+      system:
+        "You are InkFrame's Advertising Department, planning an Amazon Ads strategy for a book that already " +
+        "exists — everything you need is given below, never ask for more. Produce a mixed keyword list " +
+        "(primary/long_tail/buyer_intent/competitor_product_targeting/experimental, plus a couple of negative " +
+        "keywords to exclude) and one starter campaign. Everything you produce is a recommendation for the " +
+        "author to review, never a live account change. Call the draft_ad_strategy tool.",
+      userContent: facts || "No metadata generated yet — use the title/subtitle only.",
+      tool: STRATEGY_TOOL,
+      maxTokens: 2500,
+    });
+    result = generated.output;
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Strategy generation did not return structured output." },
+      { status: 502 }
+    );
+  }
 
   const { data: adProject, error: adProjectError } = await supabase
     .from("advertising_projects")

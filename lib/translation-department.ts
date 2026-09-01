@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } from "docx";
+import { generateText, modelUsedLabel, type TextResult } from "@/lib/ai-client";
 
 type TranslatedOutput = {
   language: string;
@@ -74,28 +74,29 @@ async function resolveSource(
   return null;
 }
 
-async function translateFrontMatter(anthropic: Anthropic, language: string, title: string, subtitle: string, description: string) {
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 1500,
+async function translateFrontMatter(language: string, title: string, subtitle: string, description: string) {
+  const generated = await generateText({
     system: `Translate the following book title, subtitle, and description into ${language}. Preserve tone and marketability — this is not a literal word-for-word translation, it should read naturally to a native ${language} reader. Respond with exactly three lines: the translated title, then the translated subtitle (blank line if none), then the translated description.`,
-    messages: [{ role: "user", content: `Title: ${title}\nSubtitle: ${subtitle}\nDescription: ${description}` }],
+    userContent: `Title: ${title}\nSubtitle: ${subtitle}\nDescription: ${description}`,
+    maxTokens: 1500,
   });
-  const textBlock = message.content.find((b) => b.type === "text");
-  const text = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "";
-  const [translatedTitle = title, translatedSubtitle = "", ...rest] = text.split("\n").filter((l, i) => i === 0 || l.trim() !== "" || i > 1);
-  return { title: translatedTitle.trim(), subtitle: translatedSubtitle.trim(), description: rest.join("\n").trim() };
+  const [translatedTitle = title, translatedSubtitle = "", ...rest] = generated.text
+    .split("\n")
+    .filter((l, i) => i === 0 || l.trim() !== "" || i > 1);
+  return {
+    title: translatedTitle.trim(),
+    subtitle: translatedSubtitle.trim(),
+    description: rest.join("\n").trim(),
+    generated,
+  };
 }
 
-async function translateUnit(anthropic: Anthropic, language: string, content: string): Promise<string> {
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 8000,
+async function translateUnit(language: string, content: string): Promise<TextResult> {
+  return generateText({
     system: `Translate the following book text into ${language}. Preserve meaning, tone, and paragraph structure — this is a professional literary translation, not a literal word-for-word conversion. Output ONLY the translated text.`,
-    messages: [{ role: "user", content }],
+    userContent: content,
+    maxTokens: 8000,
   });
-  const textBlock = message.content.find((b) => b.type === "text");
-  return textBlock && textBlock.type === "text" ? textBlock.text.trim() : content;
 }
 
 async function assembleAndUpload(
@@ -181,13 +182,22 @@ export async function runTranslationDepartmentTick(supabase: SupabaseClient): Pr
     return { processed: true, detail: `Job ${job.id}: all languages complete.` };
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured on the server.");
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  let modelUsedThisTick: string | undefined;
 
   let entry = outputs.find((o) => o.language === nextLanguage);
   if (!entry) {
-    const frontMatter = await translateFrontMatter(anthropic, nextLanguage, source.title, source.subtitle, source.description);
-    entry = { language: nextLanguage, ...frontMatter, file_ref: null, word_count: 0, _unitIndex: 0, _unitTranslations: [] };
+    const frontMatter = await translateFrontMatter(nextLanguage, source.title, source.subtitle, source.description);
+    modelUsedThisTick = modelUsedLabel(frontMatter.generated);
+    entry = {
+      language: nextLanguage,
+      title: frontMatter.title,
+      subtitle: frontMatter.subtitle,
+      description: frontMatter.description,
+      file_ref: null,
+      word_count: 0,
+      _unitIndex: 0,
+      _unitTranslations: [],
+    };
     outputs.push(entry);
   } else if (entry._unitIndex === undefined) {
     entry._unitIndex = 0;
@@ -208,14 +218,19 @@ export async function runTranslationDepartmentTick(supabase: SupabaseClient): Pr
     entry.word_count = wordCount;
   } else {
     const unit = source.units[entry._unitIndex!];
-    const translated = await translateUnit(anthropic, nextLanguage, unit.content);
-    entry._unitTranslations = [...(entry._unitTranslations ?? []), translated];
+    const translated = await translateUnit(nextLanguage, unit.content);
+    modelUsedThisTick = modelUsedLabel(translated);
+    entry._unitTranslations = [...(entry._unitTranslations ?? []), translated.text];
     entry._unitIndex = entry._unitIndex! + 1;
   }
 
   await supabase
     .from("translation_jobs")
-    .update({ status: "translating", translated_outputs: outputs, model_used: "claude-opus-5" })
+    .update({
+      status: "translating",
+      translated_outputs: outputs,
+      ...(modelUsedThisTick ? { model_used: modelUsedThisTick } : {}),
+    })
     .eq("id", job.id);
 
   return {

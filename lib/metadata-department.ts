@@ -1,8 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
+import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 
-const METADATA_TOOL = {
+const METADATA_TOOL: ToolSpec = {
   name: "generate_metadata",
   description: "Generate Amazon KDP-style listing metadata for a finished book.",
   input_schema: {
@@ -52,9 +52,6 @@ export async function runMetadataDepartmentTick(supabase: SupabaseClient): Promi
       .order("chapter_number", { ascending: true }),
   ]);
 
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured on the server.");
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
   const facts = [
     `Book type: ${project.book_type}`,
     identity?.working_title ? `Title: ${identity.working_title}` : null,
@@ -69,30 +66,23 @@ export async function runMetadataDepartmentTick(supabase: SupabaseClient): Promi
     .filter(Boolean)
     .join("\n");
 
-  const message = await anthropic.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 2000,
+  const { output: result } = await generateStructured<{
+    description_long: string;
+    description_short: string;
+    keywords: string[];
+    categories: string[];
+    bisac_codes: string[];
+  }>({
     system:
       "You are InkFrame's Metadata Department, writing Amazon KDP listing copy. Exactly 7 keyword " +
       "phrases, each <=50 characters, that genuinely describe the book — never repeat words already used " +
       "in the title/subtitle/category, and write natural multi-word phrases rather than keyword-stuffed " +
       "fragments (KDP's ranking system penalizes unreadable titles/keywords). Description leads with the " +
       "core promise/outcome. Call the generate_metadata tool.",
-    messages: [{ role: "user", content: facts }],
-    tools: [METADATA_TOOL],
-    tool_choice: { type: "tool", name: "generate_metadata" },
+    userContent: facts,
+    tool: METADATA_TOOL,
+    maxTokens: 2000,
   });
-
-  const toolUse = message.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Metadata generation did not return structured output.");
-
-  const result = toolUse.input as {
-    description_long: string;
-    description_short: string;
-    keywords: string[];
-    categories: string[];
-    bisac_codes: string[];
-  };
 
   const { error: upsertError } = await supabase
     .from("metadata_department")

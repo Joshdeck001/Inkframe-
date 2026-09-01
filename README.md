@@ -397,6 +397,52 @@ gate at all. Now:
   changes stay exactly as impossible through the app as before this
   change; this only ever touches `approval_status`.
 
+## Three AI providers, one fallback chain
+
+Every AI call in the app — the Writing Agent drafting a chapter, the
+Quality Loop scoring and revising one, Cover concepts, Metadata, Research,
+Advertising strategy, and the AI Copilot's replies — goes through
+`lib/ai-client.ts` instead of calling Anthropic directly. It tries
+**Anthropic (Claude) first, then OpenAI, then Gemini**, automatically
+falling through to the next one if a provider errors — rate-limited, out
+of credit, briefly down, whatever the reason — so one vendor having a bad
+moment doesn't stop the whole pipeline. A provider is skipped entirely if
+its API key isn't set; the app still runs fine with just one key
+configured, same as before.
+
+- **Real fallback, not a simulation** — verified live against this
+  project's actual keys: Anthropic genuinely failing (see the note below)
+  and OpenAI genuinely unreachable from this sandbox both correctly fell
+  through to Gemini, which answered correctly, including with one of the
+  actual production tool schemas (Quality Loop's 10-dimension scorer).
+- **`model_used` columns now tell the truth.** `chapters.model_used` and
+  `translation_jobs.model_used` used to be hardcoded to `"claude-opus-5"`
+  regardless of what actually ran. They now record e.g.
+  `"gemini:gemini-3.6-flash"` — whichever provider and model genuinely
+  produced that content.
+- **Provider-format differences are handled once, centrally.** Anthropic
+  and OpenAI both accept standard JSON Schema for tool/function
+  definitions directly; Gemini's `Schema` type uses uppercase type names
+  (`STRING`, not `string`) and stringified `minItems`/`maxItems` —
+  `toGeminiSchema()` converts automatically, so every department still
+  writes one schema, not three.
+- **Model names are configurable**, not hardcoded guesses that go stale —
+  `OPENAI_MODEL` / `GEMINI_MODEL` env vars, changeable in Vercel's
+  dashboard with no code edit (same pattern as `PLAN_TIER`). The Gemini
+  default was corrected once already this way: the model this code
+  originally shipped with had already been retired by Google by the time
+  it was tested live, and Google's own error message named the exact
+  replacement.
+
+**A real, live finding from building this, not a hypothetical:** testing
+this against your actual Anthropic key returned "Your credit balance is
+too low to access the Anthropic API" — a real account-status error, not a
+code bug. Worth checking your Anthropic console's billing page; until
+that's resolved, every AI call in production is silently running on
+Gemini (or OpenAI, if that key works from Vercel's network) instead of
+Claude, invisibly, because that's exactly what the fallback chain is
+built to do.
+
 ## Dashboard sidebar — every item now goes somewhere
 
 The dashboard's sidebar originally had 11 nav items and a notification

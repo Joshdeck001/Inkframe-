@@ -214,44 +214,72 @@ them directly for local testing, or register them individually in
 `vercel.json` instead of `/api/cron/all` if the project moves to a plan
 without Hobby's cron limits, for much faster (every-5-minutes) progress.
 
-### Upgrading capacity later — no code changes needed
+## How to Upgrade to Vercel Pro Later
 
-One env var, `PLAN_TIER` (`free` or `pro`, defaults to `free`), controls
-how much work each cron firing does. Change it in Vercel's dashboard
-(**Settings → Environment Variables → `PLAN_TIER`**), hit **Redeploy**
-(the dashboard's own button — nothing needs to be pushed to git, no code
-edit, no Claude Code session needed), and it takes effect immediately:
+You can change how much work InkFrame does in the background yourself,
+any time, without editing any code and without needing Claude Code or a
+developer. Here's exactly how.
 
-- **`free`**: 1 pass through every department per invocation (today's
-  behavior).
-- **`pro`**: up to 8 passes through every department per invocation
-  (stops earlier automatically once there's genuinely no work left, or if
-  the 60s time budget runs low) — meaningfully more chapters/translations/
-  metadata per firing.
+**The setting:** an environment variable named `PLAN_TIER`.
 
-`lib/plan-tier.ts` and `lib/run-all-departments.ts` are the whole
-implementation; `scripts/test-plan-tier.ts` (`npm run test:plan-tier`)
-verifies both values' control-flow behavior against a mock work queue, no
-live database needed — 12/12 checks pass as of this writing.
+**The values it accepts:** the word `free` or the word `pro`. (If you
+don't set it at all, it behaves as `free`.)
 
-**What this env var does *not* control, and why:** Vercel's own cron
-*firing frequency* is fixed by the `schedule` string in `vercel.json`,
-validated against the account's actual plan when Vercel deploys — that
-evaluation never looks at application environment variables, so no env
-var can make Vercel invoke the cron more often. To get more frequent
-triggering with zero code changes:
-- **On Vercel Pro** (no Hobby cron limits), editing `vercel.json`'s
-  `schedule` to something like `*/5 * * * *` and pushing that one change
-  is the direct route — but that specific change is a code edit, so it's
-  the one piece of this that would need a small assist next time, if
-  wanted.
-- **Fully code-free on any plan**: point a free external scheduler
-  (cron-job.org, a scheduled GitHub Action, UptimeRobot, etc.) at
-  `https://<your-domain>/api/cron/all` with header
-  `Authorization: Bearer <CRON_SECRET>`, at whatever interval that
-  service's own dashboard allows — entirely outside Vercel's Cron Jobs
-  feature and outside this codebase, so it never needs touching again
-  either.
+**Where to change it:**
+1. Go to your project on vercel.com.
+2. Click **Settings**.
+3. Click **Environment Variables** in the left-hand list.
+4. Find `PLAN_TIER` (or add it, if it isn't there yet) and set its value
+   to `free` or `pro`.
+5. Save it.
+
+**Then redeploy — this part is required, the setting won't take effect
+until you do:**
+1. Click **Deployments** at the top of the page.
+2. Click the three dots (**⋯**) next to the most recent deployment.
+3. Click **Redeploy**.
+4. Wait for it to finish (usually a couple of minutes) — after that, the
+   new setting is live.
+
+**What actually changes between `free` and `pro`:**
+
+- **Chapters per run:** Every so often, InkFrame's background system
+  wakes up and does a round of work — writing the next chapter, checking
+  quality, updating the cover/description/etc. On `free`, it does **one**
+  round of that work each time it wakes up. On `pro`, it does **up to
+  eight** rounds back-to-back each time it wakes up — so books move
+  through the pipeline roughly eight times faster, chapter for chapter.
+
+- **How often it wakes up:** This is the one part `PLAN_TIER` does **not**
+  change, and it's worth being upfront about why: Vercel's free plan only
+  allows background jobs to wake up **once per day**, and that's a rule
+  set by Vercel itself, not something a setting inside the app can
+  override — no environment variable can make Vercel's free plan check in
+  more often than once a day. So on `free`, once a day InkFrame does 1
+  round of work; on `pro`, once a day it does up to 8 rounds of work in a
+  row. Either way, it's still just once a day *waking up* — `pro` makes
+  each wake-up do much more, not happen more often.
+
+  If you want it checking in more often than once a day (not just doing
+  more per check-in), there are two ways to get that, for later:
+  - If you upgrade your actual Vercel account to a paid plan, that
+    removes the once-a-day limit — but making InkFrame use a shorter
+    interval still means editing one line in a file called
+    `vercel.json`, which is a small code change (the one thing on this
+    list that isn't just a dashboard setting).
+  - Or, at any time, on any Vercel plan, free included: use a free
+    third-party scheduling website (for example cron-job.org) to "ping"
+    InkFrame as often as you like. No code, no Vercel plan change — you'd
+    just enter InkFrame's web address in that website's own dashboard and
+    tell it how often to visit. Ask if you want help setting this up when
+    the time comes.
+
+**Tested and confirmed working both ways** before this was written —
+`free` runs exactly 1 round per wake-up, `pro` runs up to 8 (and
+sensibly stops early once there's nothing left to do, or if it's running
+low on time for that turn). Run `npm run test:plan-tier` any time to
+re-check this yourself — it doesn't need your Vercel site or database to
+be running, it checks the on/off logic directly.
 
 ## What's next
 

@@ -201,6 +201,19 @@ All in `.env.local` (gitignored, never committed) — see
     (`source: csv_import`). Nothing here ever logs into or touches a real
     Amazon Advertising account.
 
+## Deploying on Vercel's free (Hobby) plan
+
+Hobby caps cron jobs at 2, running at most once a day, and function
+duration at ~60s. The 7 department cron routes now run as one consolidated
+job (`/api/cron/all`, scheduled daily in `vercel.json`) instead of 7
+separate 5-minute jobs — `lib/run-all-departments.ts` runs each
+department's tick in sequence within a time budget. Every route's
+`maxDuration` is capped at 60. The individual `/api/cron/<name>` routes
+still exist and work the same way (same `Bearer $CRON_SECRET` auth) — call
+them directly for local testing, or register them individually in
+`vercel.json` instead of `/api/cron/all` if the project moves to a plan
+without Hobby's cron limits, for much faster (every-5-minutes) progress.
+
 ## What's next
 
 Step 11 (Admin Panel) and Step 14 (AI Copilot's real backend — its UI

@@ -1,11 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/writing-agent", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/quality-loop", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/metadata-department", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/cover-department", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/compliance-department", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/formatting-department", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/translation-department", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/all", "schedule": "0 6 * * *" }
   ]
 }

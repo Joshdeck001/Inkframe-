@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Hobby plan's ceiling
 
 const STRATEGY_TOOL = {
   name: "draft_ad_strategy",

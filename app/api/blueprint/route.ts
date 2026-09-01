@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Hobby plan's ceiling — a full blueprint call can take a while
 
 const BLUEPRINT_TOOL = {
   name: "generate_blueprint",

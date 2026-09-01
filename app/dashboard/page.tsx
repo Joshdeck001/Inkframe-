@@ -84,6 +84,7 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [exportCount, setExportCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
+  const [bellOpen, setBellOpen] = useState(false);
 
   useEffect(() => {
     document.title = title;
@@ -180,6 +181,19 @@ export default function DashboardPage() {
   const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
   const wordsWritten = (projects ?? []).reduce((sum, p) => sum + (p.project_scope?.words_written ?? 0), 0);
 
+  // Real, computed from actual project status — never a fabricated count or message.
+  const NOTIFY_STATUS: Record<string, string> = {
+    READY_FOR_REVIEW: "is ready for your review",
+    USER_APPROVED: "is approved — pick a platform to prepare your listing",
+    READY_FOR_EXPORT: "has a listing ready — you can publish it now",
+  };
+  const notifications = (projects ?? [])
+    .filter((p) => p.status in NOTIFY_STATUS)
+    .map((p) => ({
+      id: p.id,
+      text: `${p.project_identity?.working_title || "Untitled Project"} ${NOTIFY_STATUS[p.status]}`,
+    }));
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: css }} />
@@ -198,28 +212,32 @@ export default function DashboardPage() {
           <div className="nav-item active">
             <span className="nav-icon">⌂</span> Dashboard
           </div>
-          <div className="nav-item">
+          <div
+            className="nav-item"
+            style={{ cursor: "pointer" }}
+            onClick={() => (active ? router.push(`/job-progress?project=${active.id}`) : router.push("/books"))}
+          >
             <span className="nav-icon">✎</span> AI Writing Agent
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/books")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">▤</span> My Books
           </div>
           <div className="nav-item" onClick={createNewBook} style={{ cursor: "pointer" }}>
             <span className="nav-icon">＋</span> New Book
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/cover")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">◈</span> Cover Designer
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/formatter")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">▦</span> Formatter
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/images")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🖼</span> Images
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/research")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🔎</span> Research
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/metadata")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🏷</span> Metadata
           </div>
           <div className="nav-item" onClick={() => router.push("/translate")} style={{ cursor: "pointer" }}>
@@ -236,16 +254,16 @@ export default function DashboardPage() {
           </div>
 
           <div className="nav-sep"></div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/templates")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">▧</span> Templates
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/compliance")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">✓</span> Compliance Check
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/settings")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">⚙</span> Settings
           </div>
-          <div className="nav-item">
+          <div className="nav-item" onClick={() => router.push("/help")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">?</span> Help &amp; Support
           </div>
 
@@ -267,8 +285,49 @@ export default function DashboardPage() {
               🔍 Search anything... <kbd>⌘K</kbd>
             </div>
             <div className="top-right">
-              <div className="bell">
-                🔔<span className="dot">3</span>
+              <div className="bell" style={{ cursor: "pointer" }} onClick={() => setBellOpen((v) => !v)}>
+                🔔
+                {notifications.length > 0 && <span className="dot">{notifications.length}</span>}
+                {bellOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "36px",
+                      right: 0,
+                      width: "280px",
+                      background: "var(--panel)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "12px",
+                      padding: "10px",
+                      boxShadow: "0 24px 48px -20px rgba(0,0,0,.6)",
+                      zIndex: 50,
+                    }}
+                  >
+                    {notifications.length === 0 ? (
+                      <div style={{ fontSize: "12.5px", color: "var(--muted)", padding: "8px" }}>
+                        No new notifications.
+                      </div>
+                    ) : (
+                      notifications.map((n) => (
+                        <div
+                          key={n.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/publish?project=${n.id}`);
+                          }}
+                          style={{
+                            fontSize: "12.5px",
+                            padding: "9px 8px",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {n.text}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
               <div className="profile" onClick={handleSignOut} style={{ cursor: "pointer" }}>
                 <div className="avatar-top">{displayName ? displayName[0].toUpperCase() : "?"}</div>{" "}

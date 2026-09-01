@@ -8,6 +8,14 @@ const PROTECTED_PREFIXES = [
   "/publish",
   "/translate",
   "/advertising",
+  "/books",
+  "/settings",
+  "/cover",
+  "/formatter",
+  "/images",
+  "/research",
+  "/metadata",
+  "/compliance",
 ];
 
 export async function updateSession(request: NextRequest) {

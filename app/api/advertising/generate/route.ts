@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby plan's ceiling
@@ -48,7 +49,7 @@ const STRATEGY_TOOL: ToolSpec = {
   },
 };
 
-export async function POST(request: Request) {
+export const POST = withJsonErrors(async (request: Request) => {
   const { project_id } = await request.json();
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 });
 
@@ -145,4 +146,4 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json({ advertising_project: adProject, campaign, keywords: result.keywords });
-}
+});

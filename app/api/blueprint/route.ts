@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { withJsonErrors } from "@/lib/api-guard";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ const BLUEPRINT_TOOL: ToolSpec = {
   },
 };
 
-export async function POST(request: Request) {
+export const POST = withJsonErrors(async (request: Request) => {
   const { project_id } = await request.json();
   if (!project_id) {
     return NextResponse.json({ error: "project_id is required" }, { status: 400 });
@@ -139,4 +140,4 @@ export async function POST(request: Request) {
   await supabase.from("projects").update({ status: "AWAITING_APPROVAL" }).eq("id", project_id);
 
   return NextResponse.json({ blueprint });
-}
+});

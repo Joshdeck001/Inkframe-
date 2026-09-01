@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
  * gated project_id lookup) or an uploaded file (the upload path is
  * prefixed with the uploader's user id).
  */
-export async function GET(request: Request) {
+export const GET = withJsonErrors(async (request: Request) => {
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("job");
   const language = searchParams.get("language");
@@ -52,4 +53,4 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ url: signed.signedUrl });
-}
+});

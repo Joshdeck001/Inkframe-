@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireApprovedUser } from "@/lib/require-approved-user";
+import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
  * caller's session proves they own the project (via RLS on formatting_jobs)
  * before the service-role client is used to sign the URL.
  */
-export async function GET(request: Request) {
+export const GET = withJsonErrors(async (request: Request) => {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("project");
   if (!projectId) return NextResponse.json({ error: "project is required" }, { status: 400 });
@@ -39,4 +40,4 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ url: signed.signedUrl });
-}
+});

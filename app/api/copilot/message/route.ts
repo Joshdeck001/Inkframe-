@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,7 +33,7 @@ const RESPOND_TOOL: ToolSpec = {
 
 type Intent = "status_query" | "pause_production" | "resume_production" | "revise_chapter" | "general_question";
 
-export async function GET(request: Request) {
+export const GET = withJsonErrors(async (request: Request) => {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("project_id");
   if (!projectId) return NextResponse.json({ error: "project_id is required" }, { status: 400 });
@@ -56,9 +57,9 @@ export async function GET(request: Request) {
     .order("created_at", { ascending: true });
 
   return NextResponse.json({ messages: messages ?? [], production_paused: session.production_paused });
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withJsonErrors(async (request: Request) => {
   const { project_id, message, action } = await request.json();
   if (!project_id || (!message && !action)) {
     return NextResponse.json({ error: "project_id and either message or action are required" }, { status: 400 });
@@ -213,4 +214,4 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json({ reply, production_paused: productionPaused, triggered_action: triggeredAction });
-}
+});

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  * on `profiles.role`) — this only ever reports what's real, never lets an
  * admin promote/demote another user through the UI.
  */
-export async function GET() {
+export const GET = withJsonErrors(async () => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -57,7 +58,7 @@ export async function GET() {
     });
 
   return NextResponse.json({ users, truncated: authUsers.users.length >= 200 });
-}
+});
 
 /**
  * Approve/reject a pending account. Delegates entirely to the
@@ -66,7 +67,7 @@ export async function GET() {
  * actually applies) — this route has no separate authorization logic of
  * its own to keep in sync with it.
  */
-export async function POST(request: Request) {
+export const POST = withJsonErrors(async (request: Request) => {
   const { user_id, approval_status } = await request.json();
   if (!user_id || !["approved", "rejected", "pending"].includes(approval_status)) {
     return NextResponse.json({ error: "user_id and a valid approval_status are required" }, { status: 400 });
@@ -85,4 +86,4 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 403 });
 
   return NextResponse.json({ ok: true });
-}
+});

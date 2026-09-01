@@ -76,6 +76,13 @@ export default function DashboardPage() {
   );
   const [copilotMuted, setCopilotMuted] = useState(false);
   const [productionPaused, setProductionPaused] = useState(false);
+  const [copilotSupported] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const ctor =
+      (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition ??
+      (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
+    return !!ctor && "speechSynthesis" in window;
+  });
   const [transcript, setTranscript] = useState<{ who: "user" | "inkframe"; text: string }[]>([
     { who: "inkframe", text: "How can I help with this book?" },
   ]);
@@ -144,17 +151,103 @@ export default function DashboardPage() {
     router.push("/wizard");
   }
 
+  const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
+
+  useEffect(() => {
+    if (!copilotOpen || !active) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/copilot/message?project_id=${active.id}`);
+      if (!res.ok || cancelled) return;
+      const json = await res.json();
+      if (cancelled) return;
+      setProductionPaused(!!json.production_paused);
+      if (json.messages?.length > 0) {
+        setTranscript(
+          json.messages.map((m: { role: "user" | "inkframe"; content: string }) => ({
+            who: m.role === "inkframe" ? "inkframe" : "user",
+            text: m.content,
+          }))
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [copilotOpen, active]);
+
+  async function sendCopilotMessage(text: string) {
+    if (!active) {
+      alert("Create a book first — the Copilot needs a project to talk about.");
+      return;
+    }
+    setTranscript((t) => [...t, { who: "user", text }]);
+    setCopilotStatus("thinking");
+    try {
+      const res = await fetch("/api/copilot/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: active.id, message: text }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Copilot request failed.");
+      setProductionPaused(!!json.production_paused);
+      setTranscript((t) => [...t, { who: "inkframe", text: json.reply }]);
+      speak(json.reply);
+    } catch (e) {
+      const errText = e instanceof Error ? e.message : "Sorry — I couldn't reach the Copilot just now.";
+      setTranscript((t) => [...t, { who: "inkframe", text: errText }]);
+      setCopilotStatus(copilotMuted ? "muted" : "listening");
+    }
+  }
+
+  function speak(text: string) {
+    if (copilotMuted || !("speechSynthesis" in window)) {
+      setCopilotStatus(copilotMuted ? "muted" : "listening");
+      return;
+    }
+    setCopilotStatus("speaking");
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => setCopilotStatus(copilotMuted ? "muted" : "listening");
+    utterance.onerror = () => setCopilotStatus(copilotMuted ? "muted" : "listening");
+    window.speechSynthesis.speak(utterance);
+  }
+
   function cpToggleListen() {
     if (copilotMuted) {
       alert("InkFrame is muted. Unmute first to talk.");
       return;
     }
-    setCopilotStatus("thinking");
-    setTimeout(() => {
-      setCopilotStatus("speaking");
-      setTranscript((t) => [...t, { who: "inkframe", text: "Got it — I'll keep working on that." }]);
-      setTimeout(() => setCopilotStatus("listening"), 1800);
-    }, 1000);
+    if (!active) {
+      alert("Create a book first — the Copilot needs a project to talk about.");
+      return;
+    }
+    if (!copilotSupported) {
+      const text = window.prompt("Voice isn't supported in this browser. Type your message to InkFrame:");
+      if (text && text.trim()) sendCopilotMessage(text.trim());
+      return;
+    }
+
+    const SpeechRecognitionCtor = (
+      (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ??
+      (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognition }).webkitSpeechRecognition
+    ) as new () => SpeechRecognition;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    setCopilotStatus("listening");
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const text = event.results[0]?.[0]?.transcript;
+      if (text) sendCopilotMessage(text);
+    };
+    recognition.onerror = () => setCopilotStatus(copilotMuted ? "muted" : "listening");
+    recognition.onend = () => {
+      // Only fall back to idle-listening if we didn't move on to thinking/speaking from a result.
+      setCopilotStatus((s) => (s === "listening" ? (copilotMuted ? "muted" : "listening") : s));
+    };
+    recognition.start();
   }
 
   function cpToggleMute() {
@@ -162,23 +255,31 @@ export default function DashboardPage() {
       const next = !m;
       setCopilotStatus(next ? "muted" : "listening");
       // Production continues regardless of mute state — mute never touches job status.
+      if (next && "speechSynthesis" in window) window.speechSynthesis.cancel();
       return next;
     });
   }
 
-  function cpTogglePause() {
-    setProductionPaused((p) => {
-      const next = !p;
-      // Voice/listening state is untouched here — pausing production never mutes the mic.
-      setTranscript((t) => [
-        ...t,
-        { who: "inkframe", text: next ? "Production paused. I'll stop working until you resume." : "Resuming production now." },
-      ]);
-      return next;
-    });
+  async function cpTogglePause() {
+    if (!active) {
+      alert("Create a book first — there's no production to pause yet.");
+      return;
+    }
+    const nextAction = productionPaused ? "resume" : "pause";
+    try {
+      const res = await fetch("/api/copilot/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: active.id, action: nextAction }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not update production status.");
+      setProductionPaused(!!json.production_paused);
+      setTranscript((t) => [...t, { who: "inkframe", text: json.reply }]);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update production status.");
+    }
   }
-
-  const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
   const wordsWritten = (projects ?? []).reduce((sum, p) => sum + (p.project_scope?.words_written ?? 0), 0);
 
   // Real, computed from actual project status — never a fabricated count or message.

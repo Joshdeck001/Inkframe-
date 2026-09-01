@@ -23,6 +23,11 @@
      bucket for manuscripts uploaded to the Translation Department, with
      real storage.objects RLS (unlike `exports`, the browser uploads here
      directly as the signed-in user).
+   - `supabase/migrations/0006_copilot_session_unique.sql` — one
+     `copilot_sessions` row per project, so the AI Copilot's "find or
+     create a session" call is a true upsert and `production_paused` has
+     one unambiguous value per project for the background cron ticks to
+     check.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

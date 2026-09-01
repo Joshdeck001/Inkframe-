@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
+import { getPausedProjectIds } from "@/lib/production-paused";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -18,10 +19,16 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
   processed: boolean;
   detail: string;
 }> {
-  const { data: project, error: projectQueryError } = await supabase
+  const pausedProjectIds = await getPausedProjectIds(supabase);
+
+  let projectQuery = supabase
     .from("projects")
     .select("id, status, book_type")
-    .in("status", ["QUEUED", "WRITING"])
+    .in("status", ["QUEUED", "WRITING"]);
+  if (pausedProjectIds.length > 0) {
+    projectQuery = projectQuery.not("id", "in", `(${pausedProjectIds.join(",")})`);
+  }
+  const { data: project, error: projectQueryError } = await projectQuery
     .order("updated_at", { ascending: true })
     .limit(1)
     .maybeSingle();

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getPausedProjectIds } from "@/lib/production-paused";
 
 const COVER_TOOL = {
   name: "generate_cover_concepts",
@@ -34,10 +35,13 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
   processed: boolean;
   detail: string;
 }> {
-  const { data: project, error: projectQueryError } = await supabase
-    .from("projects")
-    .select("id, book_type")
-    .eq("status", "GENERATING_COVER")
+  const pausedProjectIds = await getPausedProjectIds(supabase);
+
+  let projectQuery = supabase.from("projects").select("id, book_type").eq("status", "GENERATING_COVER");
+  if (pausedProjectIds.length > 0) {
+    projectQuery = projectQuery.not("id", "in", `(${pausedProjectIds.join(",")})`);
+  }
+  const { data: project, error: projectQueryError } = await projectQuery
     .order("updated_at", { ascending: true })
     .limit(1)
     .maybeSingle();

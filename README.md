@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-10, 12, 13, and 15 of the build plan are done:
+Steps 1-10 and 12-15 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -201,6 +201,45 @@ All in `.env.local` (gitignored, never committed) — see
     (`source: csv_import`). Nothing here ever logs into or touches a real
     Amazon Advertising account.
 
+14. **AI Copilot — real backend** — the dashboard's Copilot widget now
+    talks to `/api/copilot/message` instead of a canned `setTimeout` reply.
+
+    - **Voice I/O is browser-native** — the Web Speech API
+      (`SpeechRecognition`/`webkitSpeechRecognition` for input,
+      `SpeechSynthesis` for output). No new API key, and the browser's own
+      native permission prompt handles microphone access the first time you
+      talk to it. Unsupported browsers (Firefox, Safari as of this writing)
+      fall back to a text prompt instead of breaking.
+    - Every message is saved to `copilot_sessions`/`copilot_messages` (one
+      session per project — `0006_copilot_session_unique.sql`), so reopening
+      the widget loads the real conversation history instead of resetting.
+    - The backend classifies each message with Claude (forced tool call)
+      into `status_query`, `pause_production`, `resume_production`,
+      `revise_chapter`, or `general_question`, using *only* the project's
+      real current facts (chapter statuses, words written, quality gate
+      score, compliance check results, formatting job status) — it never
+      invents progress or numbers that aren't in the database.
+    - **MUTE and PAUSE PRODUCTION remain fully independent controls, as
+      required.** Mute only stops speech capture/output
+      (`copilotMuted`, local UI state) — it never touches production. Pause
+      writes `copilot_sessions.production_paused = true` for real, and every
+      department cron tick (Writing Agent, Quality Loop, Cover, Metadata,
+      Compliance, Formatting — `lib/production-paused.ts`) now filters out
+      paused projects, so "Pause Production" genuinely stops background work
+      instead of just changing a label. The Pause/Resume button itself calls
+      the API directly (`action: "pause"`/`"resume"`) rather than routing
+      through the LLM, so it's instant and never depends on the model
+      classifying the click correctly.
+    - "Revise this chapter" is a real action too: it only fires if the named
+      chapter exists and has already finished its first pass (`approved`),
+      sends it back through the Quality Loop (`chapters.status = 'written'`,
+      `projects.status = 'REVIEWING'`), and says plainly when it can't act
+      (chapter not found, still mid-draft, or the book's already exported)
+      instead of pretending it did something it didn't.
+    - InkFrame still never claims to submit anything to a publishing or
+      advertising platform through the Copilot — same prepare-and-handoff
+      rule as everywhere else in the app.
+
 ## Deploying on Vercel's free (Hobby) plan
 
 Hobby caps cron jobs at 2, running at most once a day, and function
@@ -306,7 +345,6 @@ real, reusing the same visual language as the 8 approved pages
 
 ## What's next
 
-Step 11 (Admin Panel) and Step 14 (AI Copilot's real backend — its UI
-shell already exists on the dashboard) are what's left, and neither has a
-fully separate provided mockup, so they're worth a check-in before
-building new UI. See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 11 (Admin Panel) is what's left. It has no approved mockup, so it's
+worth a check-in on what it should look like before building new UI. See
+the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

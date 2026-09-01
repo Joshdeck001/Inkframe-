@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getPausedProjectIds } from "@/lib/production-paused";
 
 type ComplianceCheck = {
   project_id: string;
@@ -28,10 +29,13 @@ export async function runComplianceDepartmentTick(supabase: SupabaseClient): Pro
   processed: boolean;
   detail: string;
 }> {
-  const { data: project, error: projectQueryError } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("status", "COMPLIANCE_CHECK")
+  const pausedProjectIds = await getPausedProjectIds(supabase);
+
+  let projectQuery = supabase.from("projects").select("id").eq("status", "COMPLIANCE_CHECK");
+  if (pausedProjectIds.length > 0) {
+    projectQuery = projectQuery.not("id", "in", `(${pausedProjectIds.join(",")})`);
+  }
+  const { data: project, error: projectQueryError } = await projectQuery
     .order("updated_at", { ascending: true })
     .limit(1)
     .maybeSingle();

@@ -1,6 +1,7 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } from "docx";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQualityGate } from "@/lib/quality-gate";
+import { getPausedProjectIds } from "@/lib/production-paused";
 
 /**
  * Assembles the approved manuscript into a DOCX file and stores it in the
@@ -12,10 +13,13 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
   processed: boolean;
   detail: string;
 }> {
-  const { data: project, error: projectQueryError } = await supabase
-    .from("projects")
-    .select("id, user_id")
-    .eq("status", "FORMATTING")
+  const pausedProjectIds = await getPausedProjectIds(supabase);
+
+  let projectQuery = supabase.from("projects").select("id, user_id").eq("status", "FORMATTING");
+  if (pausedProjectIds.length > 0) {
+    projectQuery = projectQuery.not("id", "in", `(${pausedProjectIds.join(",")})`);
+  }
+  const { data: project, error: projectQueryError } = await projectQuery
     .order("updated_at", { ascending: true })
     .limit(1)
     .maybeSingle();

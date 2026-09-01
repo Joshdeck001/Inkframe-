@@ -16,6 +16,9 @@
      the app never reads it directly from the browser, only through
      `/api/export-download`, which signs a short-lived URL after checking
      the requester owns the project.
+   - `supabase/migrations/0004_publishing_jobs_unique.sql` — one
+     `publishing_jobs` row per project+platform, so re-selecting a
+     platform in the Publishing Engine refreshes it instead of duplicating.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

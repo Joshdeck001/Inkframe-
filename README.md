@@ -5,7 +5,7 @@ Supabase + Anthropic.
 
 ## Status
 
-Steps 1-10 of the build plan are done:
+Steps 1-10 and Step 13 of the build plan are done:
 
 1. **Project setup** — the 5 approved pages (`index`, `auth`, `dashboard`,
    `new-book-wizard`, `job-progress`) are ported into Next.js routes with
@@ -144,11 +144,28 @@ All in `.env.local` (gitignored, never committed) — see
     Published This" flow below the checklist is still the original static
     demo — that's Step 13 (Publishing Engine), not this step.
 
+13. **Publishing Engine** — the rest of `publish.html` (below the Step 10
+    checklist) is now real too, and fully converted to React (no more
+    injected vanilla script): **Approve & Continue** sets
+    `projects.status = USER_APPROVED` and logs it to `publishing_log`;
+    picking a platform card creates/updates a `publishing_jobs` row
+    (unique per project+platform — `0004_publishing_jobs_unique.sql`) with
+    real `prepared_fields` (title, description, all 7 keywords, top
+    category — all pulled from `metadata_department`; price is a simple
+    word-count-tier suggestion, clearly labeled a suggestion, never
+    auto-set) and moves the project to `READY_FOR_EXPORT`; the Copy
+    buttons and platform bookshelf link work for real. **I've Published
+    This** sets `publishing_jobs.status = user_marked_published`,
+    `projects.status = EXPORTED`, and logs the event. InkFrame still never
+    logs into or submits to any platform itself — this is the
+    prepare-and-handoff flow exactly as specced, just with real data
+    instead of the static demo.
+
 ## What's next
 
-Step 13 (Publishing Engine) reuses `publish.html`, already ported — ready
-to pick up directly, same for Step 12 (Translation, `translate.html`) and
-Step 15 (Advertising, `advertising.html`). Step 11 (Admin Panel) is the
-one that genuinely has no provided mockup, so that's worth a check-in
-before building new UI. See the roadmap in
-`InkFrame_Opening_ClaudeCode_Prompt.md`.
+Step 12 (Translation, `translate.html`) and Step 15 (Advertising,
+`advertising.html`) both reuse pages that are already ported — ready to
+pick up directly. Step 11 (Admin Panel) and Step 14 (AI Copilot's real
+backend — its UI shell already exists on the dashboard) are the two
+without a fully separate provided mockup, worth a check-in first. See the
+roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md`.

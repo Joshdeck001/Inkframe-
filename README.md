@@ -281,6 +281,29 @@ low on time for that turn). Run `npm run test:plan-tier` any time to
 re-check this yourself — it doesn't need your Vercel site or database to
 be running, it checks the on/off logic directly.
 
+## Dashboard sidebar — every item now goes somewhere
+
+The dashboard's sidebar originally had 11 nav items and a notification
+bell with no click behavior at all (true of the original approved design
+too — no mockup ever existed for these). All of them now go somewhere
+real, reusing the same visual language as the 8 approved pages
+(`content/shared-secondary.css.ts`):
+
+- **My Books** (`/books`), **Cover Designer** (`/cover`), **Formatter**
+  (`/formatter`), **Research** (`/research`), **Metadata** (`/metadata`),
+  **Compliance Check** (`/compliance`) — real data per project
+  (`lib/useMyProjects.ts` + `lib/ProjectPicker.tsx` are shared across the
+  project-scoped ones).
+- **Settings** (`/settings`) — real name/password changes, sign out.
+- **Help & Support** (`/help`) — static FAQ.
+- **Templates** and **Images** — honestly labeled "not built yet" rather
+  than faked, since no template system or image-generation backend
+  exists.
+- **AI Writing Agent** routes to `/job-progress` for whichever project is
+  actually active.
+- The **notification bell** is a real dropdown computed from actual
+  project status — no fabricated count.
+
 ## What's next
 
 Step 11 (Admin Panel) and Step 14 (AI Copilot's real backend — its UI

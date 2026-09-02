@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title } from "@/content/dashboard";
@@ -96,9 +96,22 @@ export default function DashboardPage() {
   const [adminMessages, setAdminMessages] = useState<{ id: string; body: string }[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     document.title = title;
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -181,6 +194,16 @@ export default function DashboardPage() {
   }
 
   const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
+
+  const visibleProjects = (() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return projects;
+    return (projects ?? []).filter((p) => {
+      const title = p.project_identity?.working_title ?? "";
+      const subtitle = p.project_identity?.subtitle ?? "";
+      return title.toLowerCase().includes(q) || subtitle.toLowerCase().includes(q);
+    });
+  })();
 
   useEffect(() => {
     if (!copilotOpen || !active) return;
@@ -425,7 +448,21 @@ export default function DashboardPage() {
               ☰
             </button>
             <div className="search">
-              🔍 Search anything... <kbd>⌘K</kbd>
+              🔍
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search your books..."
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSearchQuery("");
+                    searchInputRef.current?.blur();
+                  }
+                }}
+              />
+              {!searchQuery && <kbd>⌘K</kbd>}
             </div>
             <div className="top-right">
               <div className="bell" style={{ cursor: "pointer" }} onClick={() => setBellOpen((v) => !v)}>
@@ -606,8 +643,8 @@ export default function DashboardPage() {
                     <span className="view-all">View All</span>
                   </div>
                   <div id="projects-list">
-                    {projects && projects.length > 0 ? (
-                      projects.map((p) => (
+                    {visibleProjects && visibleProjects.length > 0 ? (
+                      visibleProjects.map((p) => (
                         <div className="project-row" key={p.id}>
                           <div className="book-thumb">IF</div>
                           <div>
@@ -638,6 +675,11 @@ export default function DashboardPage() {
                       <button className="btn-primary" onClick={createNewBook}>
                         ＋ Create New Book
                       </button>
+                    </div>
+                  )}
+                  {projects && projects.length > 0 && visibleProjects && visibleProjects.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "34px 10px", fontSize: "13px", color: "var(--muted)" }}>
+                      No books match &quot;{searchQuery}&quot;.
                     </div>
                   )}
                 </div>

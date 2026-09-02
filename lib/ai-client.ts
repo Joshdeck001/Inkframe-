@@ -10,6 +10,15 @@ import { GoogleGenAI, Type as GeminiType, FunctionCallingConfigMode } from "@goo
  * one key set, same as before. Every caller gets back which provider and
  * model actually served the request, so `model_used` columns record the
  * real answer instead of a hardcoded string.
+ *
+ * Every attempt is time-boxed against a shared budget (see OVERALL_BUDGET_MS
+ * below) — both SDKs' own `timeout` option AND an independent Promise.race
+ * cutoff, belt-and-suspenders. Without this, a hung provider (each SDK
+ * defaults to a 10-MINUTE timeout) can blow straight through Vercel's
+ * function duration limit, which kills the whole request at the platform
+ * level before any in-process try/catch — including the one right here —
+ * ever runs, and the caller gets an empty response instead of a real error.
+ * This was a genuine bug found in production, not a hypothetical.
  */
 
 export type AiProvider = "anthropic" | "openai" | "gemini";
@@ -50,35 +59,66 @@ const ANTHROPIC_MODEL = "claude-opus-5";
 const OPENAI_MODEL = process.env.OPENAI_MODEL?.trim() || "gpt-4o";
 const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
+// Total time every route's maxDuration=60 allows for AI work across ALL
+// three provider attempts combined, with a safety margin for the
+// surrounding Supabase calls. Matches the 50s convention already used in
+// lib/run-all-departments.ts for the same reason.
+const OVERALL_BUDGET_MS = 50000;
+const MIN_ATTEMPT_MS = 5000; // never try a provider with less time than this — not enough to be worth it
+
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 // --- Anthropic ---------------------------------------------------------
 
-async function anthropicStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number) {
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const message = await anthropic.messages.create({
-    model: ANTHROPIC_MODEL,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: "user", content: userContent }],
-    tools: [{ name: tool.name, description: tool.description, input_schema: tool.input_schema }],
-    tool_choice: { type: "tool", name: tool.name },
-  });
+async function anthropicStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number, timeoutMs: number) {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs });
+  const message = await withTimeout(
+    anthropic.messages.create({
+      model: ANTHROPIC_MODEL,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userContent }],
+      tools: [{ name: tool.name, description: tool.description, input_schema: tool.input_schema }],
+      tool_choice: { type: "tool", name: tool.name },
+    }),
+    timeoutMs,
+    "Anthropic"
+  );
   const toolUse = message.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") throw new Error("Anthropic did not return structured output.");
   return toolUse.input;
 }
 
-async function anthropicText(system: string, userContent: string, maxTokens: number) {
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const message = await anthropic.messages.create({
-    model: ANTHROPIC_MODEL,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: "user", content: userContent }],
-  });
+async function anthropicText(system: string, userContent: string, maxTokens: number, timeoutMs: number) {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs });
+  const message = await withTimeout(
+    anthropic.messages.create({
+      model: ANTHROPIC_MODEL,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: "user", content: userContent }],
+    }),
+    timeoutMs,
+    "Anthropic"
+  );
   const textBlock = message.content.find((b) => b.type === "text");
   if (!textBlock || textBlock.type !== "text") throw new Error("Anthropic did not return text output.");
   return textBlock.text.trim();
@@ -86,33 +126,41 @@ async function anthropicText(system: string, userContent: string, maxTokens: num
 
 // --- OpenAI --------------------------------------------------------------
 
-async function openaiStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const completion = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    max_completion_tokens: maxTokens,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: userContent },
-    ],
-    tools: [{ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }],
-    tool_choice: { type: "function", function: { name: tool.name } },
-  });
+async function openaiStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number, timeoutMs: number) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: timeoutMs });
+  const completion = await withTimeout(
+    openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      max_completion_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+      tools: [{ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.input_schema } }],
+      tool_choice: { type: "function", function: { name: tool.name } },
+    }),
+    timeoutMs,
+    "OpenAI"
+  );
   const call = completion.choices[0]?.message?.tool_calls?.[0];
   if (!call || call.type !== "function") throw new Error("OpenAI did not return structured output.");
   return JSON.parse(call.function.arguments);
 }
 
-async function openaiText(system: string, userContent: string, maxTokens: number) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const completion = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    max_completion_tokens: maxTokens,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: userContent },
-    ],
-  });
+async function openaiText(system: string, userContent: string, maxTokens: number, timeoutMs: number) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: timeoutMs });
+  const completion = await withTimeout(
+    openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      max_completion_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+    }),
+    timeoutMs,
+    "OpenAI"
+  );
   const text = completion.choices[0]?.message?.content;
   if (!text) throw new Error("OpenAI did not return text output.");
   return text.trim();
@@ -152,38 +200,47 @@ function toGeminiSchema(schema: JsonSchema): Record<string, unknown> {
   return out;
 }
 
-async function geminiStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number) {
+async function geminiStructured(system: string, userContent: string, tool: ToolSpec, maxTokens: number, timeoutMs: number) {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: userContent,
-    config: {
-      systemInstruction: system,
-      maxOutputTokens: maxTokens,
-      tools: [
-        {
-          functionDeclarations: [
-            { name: tool.name, description: tool.description, parameters: toGeminiSchema(tool.input_schema) },
-          ],
+  const response = await withTimeout(
+    ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: userContent,
+      config: {
+        systemInstruction: system,
+        maxOutputTokens: maxTokens,
+        httpOptions: { timeout: timeoutMs },
+        tools: [
+          {
+            functionDeclarations: [
+              { name: tool.name, description: tool.description, parameters: toGeminiSchema(tool.input_schema) },
+            ],
+          },
+        ],
+        toolConfig: {
+          functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: [tool.name] },
         },
-      ],
-      toolConfig: {
-        functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: [tool.name] },
       },
-    },
-  });
+    }),
+    timeoutMs,
+    "Gemini"
+  );
   const call = response.functionCalls?.[0];
   if (!call?.args) throw new Error("Gemini did not return structured output.");
   return call.args;
 }
 
-async function geminiText(system: string, userContent: string, maxTokens: number) {
+async function geminiText(system: string, userContent: string, maxTokens: number, timeoutMs: number) {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: userContent,
-    config: { systemInstruction: system, maxOutputTokens: maxTokens },
-  });
+  const response = await withTimeout(
+    ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: userContent,
+      config: { systemInstruction: system, maxOutputTokens: maxTokens, httpOptions: { timeout: timeoutMs } },
+    }),
+    timeoutMs,
+    "Gemini"
+  );
   const text = response.text;
   if (!text) throw new Error("Gemini did not return text output.");
   return text.trim();
@@ -205,15 +262,21 @@ export async function generateStructured<T>(opts: {
 }): Promise<StructuredResult<T>> {
   const maxTokens = opts.maxTokens ?? 2000;
   const errors: string[] = [];
+  const deadline = Date.now() + OVERALL_BUDGET_MS;
   for (const p of PROVIDERS) {
     if (!process.env[p.envKey]) continue;
+    const timeLeft = deadline - Date.now();
+    if (timeLeft < MIN_ATTEMPT_MS) {
+      errors.push(`${p.name}: skipped, out of time budget`);
+      continue;
+    }
     try {
       const output =
         p.name === "anthropic"
-          ? await anthropicStructured(opts.system, opts.userContent, opts.tool, maxTokens)
+          ? await anthropicStructured(opts.system, opts.userContent, opts.tool, maxTokens, timeLeft)
           : p.name === "openai"
-            ? await openaiStructured(opts.system, opts.userContent, opts.tool, maxTokens)
-            : await geminiStructured(opts.system, opts.userContent, opts.tool, maxTokens);
+            ? await openaiStructured(opts.system, opts.userContent, opts.tool, maxTokens, timeLeft)
+            : await geminiStructured(opts.system, opts.userContent, opts.tool, maxTokens, timeLeft);
       return { output: output as T, provider: p.name, model: p.model };
     } catch (e) {
       errors.push(`${p.name}: ${errorMessage(e)}`);
@@ -228,15 +291,21 @@ export async function generateStructured<T>(opts: {
 export async function generateText(opts: { system: string; userContent: string; maxTokens?: number }): Promise<TextResult> {
   const maxTokens = opts.maxTokens ?? 8000;
   const errors: string[] = [];
+  const deadline = Date.now() + OVERALL_BUDGET_MS;
   for (const p of PROVIDERS) {
     if (!process.env[p.envKey]) continue;
+    const timeLeft = deadline - Date.now();
+    if (timeLeft < MIN_ATTEMPT_MS) {
+      errors.push(`${p.name}: skipped, out of time budget`);
+      continue;
+    }
     try {
       const text =
         p.name === "anthropic"
-          ? await anthropicText(opts.system, opts.userContent, maxTokens)
+          ? await anthropicText(opts.system, opts.userContent, maxTokens, timeLeft)
           : p.name === "openai"
-            ? await openaiText(opts.system, opts.userContent, maxTokens)
-            : await geminiText(opts.system, opts.userContent, maxTokens);
+            ? await openaiText(opts.system, opts.userContent, maxTokens, timeLeft)
+            : await geminiText(opts.system, opts.userContent, maxTokens, timeLeft);
       return { text, provider: p.name, model: p.model };
     } catch (e) {
       errors.push(`${p.name}: ${errorMessage(e)}`);

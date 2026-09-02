@@ -122,53 +122,8 @@ All in `.env.local` (gitignored, never committed) — see
      the project — there's no direct client read access to the bucket.
      Only `docx` is produced; EPUB/PDF aren't implemented, and
      `formatting_jobs.output_formats` only ever lists what was actually
-     generated. **Real cover and interior images are embedded directly in
-     the file, not just referenced** — the department fetches the actual
-     generated artwork (from the `covers` and `manuscript-images`
-     buckets) at export time and inserts it as real image data (`docx`'s
-     `ImageRun`, cover centered on the title page, each interior image
-     right under its chapter heading), so opening the downloaded `.docx`
-     in Word/Google Docs shows the pictures inline — it's not just prompt
-     text. With no real artwork generated yet (no billing enabled), the
-     manuscript exports exactly as it always did: text only, no broken
-     image placeholders. **Real book typography, not a default Word
-     document** — 0.75in margins, Times New Roman body text, a centered
-     "Chapter One"/"Chapter Two"/… heading (spelled out, not a bare
-     numeral) with the chapter's own title beneath it in italics, and a
-     centered page number in the footer of every page. Verified directly
-     against the generated `.docx`'s internal XML (page size, margins,
-     justification, indent values, the footer's page-number field, and
-     the embedded font all confirmed present and correct) rather than
-     just assumed from the `docx` library's API.
-     - **Trim size is a real wizard question now** (Step 4, "How long
-       should this book be?"), not hardcoded — 5×8in, 5.5×8.5in, 6×9in
-       (the default — a standard KDP paperback size), or 8.5×11in for a
-       guide/workbook. Stored in `project_scope.trim_size`
-       (`0013_book_formatting.sql`) and read by the Formatting Department
-       at export time.
-     - **Body formatting depends on the book's type**
-       (`lib/book-format.ts`), decided once per project and applied
-       identically to every chapter from first page to last — never
-       switching styles partway through a book. Fiction/Memoir/
-       Biography/Children's/Serial Fiction/Other get justified prose with
-       0.5in first-line indents (no indent on a chapter's opening
-       paragraph, the standard typographic convention) — unchanged from
-       before. **Nonfiction/Self-help/Educational/Technical-Professional
-       get real structure**: the Writing Agent (`lib/writing-agent.ts`)
-       is told to use lightweight Markdown — `## `/`### ` for
-       subheadings, `- ` for bullet lists, `1. ` for numbered
-       steps/lists, and triple-backtick fenced code blocks for any code
-       or exact commands — only where it genuinely helps (most of the
-       chapter is still plain prose), and the Formatting Department
-       parses that into real bold headings, hanging-indent bulleted/
-       numbered lists, and monospace shaded code blocks, left-aligned
-       block-style (no first-line indent) rather than fiction's
-       justified+indented convention. Built for the product guides, user
-       guides, and workbooks this is meant to produce next, not just
-       novels — verified by generating a sample chapter's worth of
-       headings/bullets/numbered-steps/code and confirming each element
-       (bold text, bullet/number prefix, shaded monospace lines) landed
-       correctly in the generated `.docx`'s XML, in the right order.
+     generated. See "The Professional Book Formatting Engine" below for
+     what it actually produces.
 
    Once formatting finishes, status reaches `READY_FOR_REVIEW` and
    `job-progress` shows the real metadata, cover concept prompts, and
@@ -566,6 +521,107 @@ and `lib/image-department.ts`:
 - **`/images` now shows real placements and artwork** per book instead of
   the old "not built yet" placeholder — chapter, placement location,
   prompt, and the generated image once one exists.
+
+## The Professional Book Formatting Engine
+
+The Formatting Department (`lib/formatting-department.ts`,
+`lib/book-format.ts`, `lib/image-dimensions.ts`) doesn't just apply one
+Word template with the title swapped in. It classifies the book, selects
+a real design system for it, and applies that system consistently from
+page one to the last page.
+
+**How it works, end to end:**
+
+1. **Book Design Profile** (`lib/book-format.ts`) — the project's fixed
+   `book_type` maps to one of four design families, decided once and
+   applied identically to every chapter: **Fiction** (justified prose,
+   0.5in first-line indents, no indent on a chapter's opening paragraph —
+   the standard typographic convention), **Children's** (large 14pt type,
+   left-aligned, generous paragraph spacing), **Self-Help** (left-aligned
+   block paragraphs, sans-serif headings, callout boxes), and
+   **Technical/Educational/Nonfiction** (denser 11pt type, sans-serif
+   headings, callouts, and tables). Each family is a data record — font,
+   size, alignment, indent rule, chapter-heading treatment — not a
+   special-cased block of formatting code per book.
+2. **The Writing Agent's prompt changes with the family**
+   (`writingGuidanceFor()`), not just its content. Self-help chapters are
+   told to use `> KEY TAKEAWAY:` / `> TIP:` / `> ACTION STEP:` callout
+   lines where they genuinely fit; technical/educational chapters are
+   told to use `> NOTE:` / `> WARNING:` / `> IMPORTANT:` / `> DEFINITION:`
+   callouts and real Markdown tables for tabular information. Fiction's
+   prompt is unchanged — plain narrative prose only.
+3. **The Formatting Department parses that structure into real docx
+   elements** — `## `/`### ` headings (tagged with Word's real heading
+   levels, not just bold text), hanging-indent bulleted/numbered lists,
+   monospace shaded code blocks, a real `Table` with a shaded repeating
+   header row parsed from Markdown pipe-table syntax, and callout boxes
+   (tinted background + a left accent bar — the same convention many
+   published technical books and documentation sites use) color-coded per
+   label. Nothing here invents structure the manuscript doesn't have —
+   every element traces back to markup the Writing Agent actually wrote.
+4. **A real front matter**: a title page, a copyright page (©
+   [current year] and the real author name, standard rights-reserved
+   boilerplate, and bracketed placeholders — `[PUBLISHER / IMPRINT]`,
+   `[ISBN]` — for information InkFrame genuinely doesn't have, never
+   invented), and a **real, auto-updating Table of Contents** generated
+   from the actual chapter headings via Word's own TOC field
+   (`updateFields` is set, so Word recalculates it — with real page
+   numbers — the moment the file is opened; it is not a hand-typed fake).
+   A back-matter "About the Author" page appears only when there's real
+   data to put on it (the author's name) — with `[Add a short author bio
+   here.]` as an honest placeholder, never a fabricated bio.
+5. **Context-aware pagination** — the document is built as one real docx
+   *section* per chapter (plus front and back matter), so page numbering
+   and running headers genuinely change through the book rather than
+   being one uniform setting: front matter uses lowercase Roman numerals
+   with the number hidden on the title page itself; the body restarts at
+   Arabic **1** on chapter one; every chapter's odd-page running header
+   shows *that chapter's own title*, its even-page header shows the book
+   title, and both are suppressed on each chapter's own opening page —
+   the standard convention that a chapter-opening page doesn't carry a
+   running head. Verified directly in the generated file's XML, not
+   assumed: four independently generated section headers checked, and
+   each one showed the correct, different chapter title.
+6. **Images preserve their real aspect ratio and get real captions** —
+   `lib/image-dimensions.ts` reads actual width/height straight out of
+   the PNG/JPEG/GIF bytes (no image library needed) and scales to a
+   target width accordingly, fixing a real bug where every image used to
+   be forced into a fixed square box regardless of its actual shape,
+   silently distorting anything that wasn't already 1:1. Interior images
+   get a real "Figure N. {caption}" line, numbered sequentially through
+   the whole book.
+7. **Trim size is a real wizard question** (Step 4, "How long should this
+   book be?"), not hardcoded — 5×8in, 5.5×8.5in, 6×9in (the default — a
+   standard KDP paperback size), or 8.5×11in for a guide/workbook. Stored
+   in `project_scope.trim_size` (`0013_book_formatting.sql`).
+
+**Verified for real, not just assumed from the `docx` library's API** —
+every generated `.docx` in this feature was checked with a strict OOXML
+schema validator (it caught two genuine bugs during development: a
+required `w:shd` attribute the library doesn't set automatically, and a
+paragraph-border element-ordering rule the library itself violates when
+more than one side is set — both fixed in the code, not worked around).
+Beyond schema validity, the actual content was inspected in the raw XML
+for four full sample books (one per design family) — page size and
+margins, the Roman/Arabic page-number split, the real TOC field, four
+different chapters' running headers all showing correct per-chapter
+text, a rendered table's cell contents, callout box colors and text, the
+copyright page's real author name and year, and — for a fifth sample
+with real images — the actual embedded pixel dimensions confirming
+aspect ratio was preserved and the figure caption text was correct.
+
+**What this deliberately does not attempt**, so expectations are
+accurate rather than aspirational: a true interactive visual preview (no
+browser-based layout engine exists in this stack to render one); true
+print recto/verso pagination (Word/OOXML generators don't expose real
+left/right-page-aware layout — the odd/even running-header split above
+is the closest honest approximation); EPUB/PDF output (architecturally
+compatible with this content model, but not built); an automated
+scored quality-control/preflight pass; drop caps; and finer sub-genre
+design families (romance vs. thriller vs. fantasy, etc.) beyond the four
+families the existing `book_type` field actually supports — going
+further would need a real sub-genre classification step this app
+doesn't have yet, not a fabricated one.
 
 ## Dashboard sidebar — every item now goes somewhere
 

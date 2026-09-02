@@ -1,22 +1,136 @@
+import { AlignmentType, convertInchesToTwip } from "docx";
+
 /**
- * Shared book-type/trim-size logic used by both the Writing Agent (what
- * structure to instruct the AI to write) and the Formatting Department
- * (how to render that structure, and what page size to use). Kept in one
- * place so the two stay in lockstep — a project's book_type always gets
- * the same treatment end to end, chapter to chapter, for the whole book.
+ * The Book Design Profile system — the data-driven core the rest of the
+ * Formatting Department (lib/formatting-department.ts) and the Writing
+ * Agent (lib/writing-agent.ts) plug into. One family, decided once per
+ * project from its fixed book_type, applied identically to every chapter
+ * from the first page to the last — never a per-book special case, never
+ * switching styles partway through. Deliberately keeps the family count
+ * to what the schema's existing book_type values actually support
+ * (fiction / children's / self-help / technical-nonfiction) rather than
+ * fabricating finer sub-genre distinctions (romance vs. thriller, etc.)
+ * that would need a real classification input the app doesn't collect.
  */
 
-const STRUCTURED_BOOK_TYPES = new Set(["Nonfiction", "Self-help", "Educational", "Technical/Professional"]);
+export type BookDesignFamily = "fiction" | "childrens" | "self_help" | "technical";
+
+const FAMILY_BY_BOOK_TYPE: Record<string, BookDesignFamily> = {
+  "Children's": "childrens",
+  "Self-help": "self_help",
+  Nonfiction: "technical",
+  Educational: "technical",
+  "Technical/Professional": "technical",
+};
+
+export function getDesignFamily(bookType: string | null | undefined): BookDesignFamily {
+  return (bookType && FAMILY_BY_BOOK_TYPE[bookType]) || "fiction";
+}
 
 /**
- * Structured (guide/workbook/technical) book types benefit from real
- * headings, lists, and code blocks — the Writing Agent is told to use
- * lightweight Markdown for these, and the Formatting Department parses it
- * into real docx elements. Everything else (fiction, memoir, children's,
- * etc.) stays plain narrative prose, exactly as before this existed.
+ * Structured families (real headings/lists/tables/callouts, parsed from
+ * the Writing Agent's lightweight Markdown) vs. fiction's plain narrative
+ * prose. Kept as its own check (not just `family !== "fiction"`) so the
+ * two systems can diverge later without silently coupling them.
  */
 export function isStructuredBookType(bookType: string | null | undefined): boolean {
-  return !!bookType && STRUCTURED_BOOK_TYPES.has(bookType);
+  return getDesignFamily(bookType) !== "fiction";
+}
+
+export type BookDesignProfile = {
+  family: BookDesignFamily;
+  bodyFont: string;
+  headingFont: string;
+  bodySize: number; // half-points
+  bodyAlignment: (typeof AlignmentType)[keyof typeof AlignmentType];
+  firstLineIndent: boolean;
+  paragraphSpacingAfter: number; // twips
+  chapterHeadingSize: number; // half-points
+  chapterTitleItalic: boolean;
+  calloutsEnabled: boolean;
+};
+
+const PROFILES: Record<BookDesignFamily, BookDesignProfile> = {
+  fiction: {
+    family: "fiction",
+    bodyFont: "Times New Roman",
+    headingFont: "Times New Roman",
+    bodySize: 24,
+    bodyAlignment: AlignmentType.JUSTIFIED,
+    firstLineIndent: true,
+    paragraphSpacingAfter: 0,
+    chapterHeadingSize: 28,
+    chapterTitleItalic: true,
+    calloutsEnabled: false,
+  },
+  childrens: {
+    family: "childrens",
+    bodyFont: "Georgia",
+    headingFont: "Georgia",
+    bodySize: 28,
+    bodyAlignment: AlignmentType.LEFT,
+    firstLineIndent: false,
+    paragraphSpacingAfter: 300,
+    chapterHeadingSize: 36,
+    chapterTitleItalic: false,
+    calloutsEnabled: false,
+  },
+  self_help: {
+    family: "self_help",
+    bodyFont: "Times New Roman",
+    headingFont: "Arial",
+    bodySize: 24,
+    bodyAlignment: AlignmentType.LEFT,
+    firstLineIndent: false,
+    paragraphSpacingAfter: 200,
+    chapterHeadingSize: 28,
+    chapterTitleItalic: false,
+    calloutsEnabled: true,
+  },
+  technical: {
+    family: "technical",
+    bodyFont: "Times New Roman",
+    headingFont: "Arial",
+    bodySize: 22,
+    bodyAlignment: AlignmentType.LEFT,
+    firstLineIndent: false,
+    paragraphSpacingAfter: 180,
+    chapterHeadingSize: 26,
+    chapterTitleItalic: false,
+    calloutsEnabled: true,
+  },
+};
+
+export function getDesignProfile(bookType: string | null | undefined): BookDesignProfile {
+  return PROFILES[getDesignFamily(bookType)];
+}
+
+/**
+ * Extra guidance folded into the Writing Agent's system prompt for
+ * structured families, on top of the shared Markdown-structure
+ * instructions in lib/writing-agent.ts — callouts/tables are opt-in
+ * per family so a self-help book doesn't read like a spec sheet and a
+ * technical guide doesn't read like a motivational pamphlet.
+ */
+export function writingGuidanceFor(family: BookDesignFamily): string {
+  if (family === "self_help") {
+    return (
+      "This is a self-help/personal-development book. Where it genuinely fits the content, use a callout " +
+      "line on its own starting with '> KEY TAKEAWAY:', '> TIP:', or '> ACTION STEP:' followed by the text " +
+      "— for a core insight, a practical tip, or a concrete step the reader should take. Don't force one " +
+      "into every section; only where it adds real value."
+    );
+  }
+  if (family === "technical") {
+    return (
+      "This is a technical/educational/professional reference. Where the content genuinely calls for it, " +
+      "use a callout line starting with '> NOTE:', '> WARNING:', '> IMPORTANT:', or '> DEFINITION:' " +
+      "followed by the text, and use a Markdown table (header row, a '|---|---|' separator row, then data " +
+      "rows) for any genuinely tabular information. Don't force either into content that reads better as " +
+      "plain prose or a list."
+    );
+  }
+  return "";
 }
 
 const TRIM_SIZES: Record<string, { widthIn: number; heightIn: number }> = {
@@ -29,4 +143,12 @@ const TRIM_SIZES: Record<string, { widthIn: number; heightIn: number }> = {
 /** Falls back to 6x9 (the standard KDP paperback size) for an unset/unrecognized value. */
 export function trimSizeInches(trimSize: string | null | undefined): { widthIn: number; heightIn: number } {
   return (trimSize && TRIM_SIZES[trimSize]) || TRIM_SIZES["6x9"];
+}
+
+export const PAGE_MARGIN_IN = 0.75;
+
+/** Usable text-block width in twips — page width minus both side margins. Same across the whole book. */
+export function contentWidthTwips(trimSize: string | null | undefined): number {
+  const { widthIn } = trimSizeInches(trimSize);
+  return convertInchesToTwip(widthIn - PAGE_MARGIN_IN * 2);
 }

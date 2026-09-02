@@ -65,6 +65,13 @@
      adds the foreign key `image_placements.chapter_id` was always
      missing (harmless until something actually populated the column);
      and a public `manuscript-images` bucket, same pattern as `covers`.
+   - `supabase/migrations/0012_admin_messages.sql` — real admin-to-user
+     messaging for the Admin Panel's Messages tab: `admin_messages`
+     (broadcast when `target_user_id` is null, otherwise one specific
+     user) and `admin_message_reads` (per-user dismissal, so a read
+     message doesn't keep reappearing on the dashboard). Admins get full
+     access; everyone else gets read-only access to messages actually
+     addressed to them.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

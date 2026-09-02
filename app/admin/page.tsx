@@ -8,10 +8,11 @@ import SiteContentTab from "./SiteContentTab";
 import PlatformProfilesTab from "./PlatformProfilesTab";
 import GenreTaxonomyTab from "./GenreTaxonomyTab";
 import UsersTab from "./UsersTab";
+import MessagesTab from "./MessagesTab";
 
 export const dynamic = "force-dynamic";
 
-type Tab = "content" | "platforms" | "genres" | "users";
+type Tab = "content" | "platforms" | "genres" | "users" | "messages";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -52,9 +53,7 @@ export default function AdminPage() {
       </header>
       <div className="wrap">
         <h1>⚙ Admin Panel</h1>
-        <p className="subtitle">
-          Site content, publishing platform rules, genre taxonomy, and a read-only user list — real data, admin-only.
-        </p>
+        <p className="subtitle">Admin-only tools for managing InkFrame.</p>
 
         {status === "checking" && (
           <div className="panel">
@@ -99,12 +98,16 @@ export default function AdminPage() {
               <button className={`tab-btn${tab === "users" ? " active" : ""}`} onClick={() => setTab("users")}>
                 Users
               </button>
+              <button className={`tab-btn${tab === "messages" ? " active" : ""}`} onClick={() => setTab("messages")}>
+                Messages
+              </button>
             </div>
 
             {tab === "content" && <SiteContentTab supabase={supabase} />}
             {tab === "platforms" && <PlatformProfilesTab supabase={supabase} />}
             {tab === "genres" && <GenreTaxonomyTab supabase={supabase} />}
             {tab === "users" && <UsersTab />}
+            {tab === "messages" && <MessagesTab />}
           </>
         )}
       </div>

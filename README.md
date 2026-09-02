@@ -255,7 +255,7 @@ All in `.env.local` (gitignored, never committed) — see
     no approved mockup, so it reuses the same shared design system as the
     other unmocked pages (`content/shared-secondary.css.ts`, extended with
     tabs/textarea/select/table styling — same tokens, no new visual
-    language) rather than inventing a new one. Four tabs, all backed by real
+    language) rather than inventing a new one. Five tabs, all backed by real
     tables:
 
     - **Site Content** — full CRUD on `site_content` (the landing/auth/
@@ -281,6 +281,18 @@ All in `.env.local` (gitignored, never committed) — see
       schema's own comment on `profiles.role` says role changes are
       deliberately not exposed through the app's API, only from the
       Supabase dashboard directly, and the Admin Panel honors that.
+    - **Messages** — send a real message to one user (pick them by email)
+      or broadcast to everyone, via `/api/admin/messages`
+      (`0012_admin_messages.sql`). It shows up in the recipient's
+      notification bell on `/dashboard` (📢-prefixed, alongside the
+      existing real project-status notifications), and clicking it marks
+      it read — permanently, per user, via `admin_message_reads`, not just
+      for the current session — so it doesn't keep reappearing. RLS: only
+      an admin can send; a regular user can only ever read a message
+      actually addressed to them (their own targeted messages, or a
+      broadcast) — verified against a real non-superuser Postgres role,
+      including that a non-admin's own attempt to insert a message is
+      rejected.
 
 ## Deploying on Vercel's free (Hobby) plan
 

@@ -93,6 +93,7 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [exportCount, setExportCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
+  const [adminMessages, setAdminMessages] = useState<{ id: string; body: string }[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
@@ -140,12 +141,34 @@ export default function DashboardPage() {
           ((projectRows ?? []) as unknown as ProjectRow[]).map((p) => p.id)
         );
       if (!cancelled) setExportCount(count ?? 0);
+
+      const [{ data: messages }, { data: reads }] = await Promise.all([
+        supabase
+          .from("admin_messages")
+          .select("id, body, created_at")
+          .order("created_at", { ascending: false })
+          .limit(20),
+        supabase.from("admin_message_reads").select("message_id"),
+      ]);
+      if (!cancelled) {
+        const readIds = new Set((reads ?? []).map((r) => r.message_id));
+        setAdminMessages((messages ?? []).filter((m) => !readIds.has(m.id)).map((m) => ({ id: m.id, body: m.body })));
+      }
     })();
 
     return () => {
       cancelled = true;
     };
   }, [supabase]);
+
+  async function dismissAdminMessage(id: string) {
+    setAdminMessages((msgs) => msgs.filter((m) => m.id !== id));
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from("admin_message_reads").insert({ message_id: id, user_id: user.id });
+  }
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -294,12 +317,16 @@ export default function DashboardPage() {
     USER_APPROVED: "is approved — pick a platform to prepare your listing",
     READY_FOR_EXPORT: "has a listing ready — you can publish it now",
   };
-  const notifications = (projects ?? [])
-    .filter((p) => p.status in NOTIFY_STATUS)
-    .map((p) => ({
-      id: p.id,
-      text: `${p.project_identity?.working_title || "Untitled Project"} ${NOTIFY_STATUS[p.status]}`,
-    }));
+  const notifications: { id: string; text: string; kind: "project" | "admin" }[] = [
+    ...adminMessages.map((m) => ({ id: m.id, text: m.body, kind: "admin" as const })),
+    ...(projects ?? [])
+      .filter((p) => p.status in NOTIFY_STATUS)
+      .map((p) => ({
+        id: p.id,
+        text: `${p.project_identity?.working_title || "Untitled Project"} ${NOTIFY_STATUS[p.status]}`,
+        kind: "project" as const,
+      })),
+  ];
 
   return (
     <>
@@ -429,7 +456,8 @@ export default function DashboardPage() {
                           key={n.id}
                           onClick={(e) => {
                             e.stopPropagation();
-                            router.push(`/publish?project=${n.id}`);
+                            if (n.kind === "admin") dismissAdminMessage(n.id);
+                            else router.push(`/publish?project=${n.id}`);
                           }}
                           style={{
                             fontSize: "12.5px",
@@ -438,6 +466,7 @@ export default function DashboardPage() {
                             cursor: "pointer",
                           }}
                         >
+                          {n.kind === "admin" && <span style={{ marginRight: 6 }}>📢</span>}
                           {n.text}
                         </div>
                       ))

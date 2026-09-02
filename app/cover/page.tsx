@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { sharedSecondaryCss } from "@/content/shared-secondary.css";
@@ -18,19 +18,53 @@ export default function CoverDesignerPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const effectiveId = selectedId ?? (projects && projects.length > 0 ? projects[0].id : null);
   const [concepts, setConcepts] = useState<CoverConcept[] | null>(null);
+  const [finalCoverRef, setFinalCoverRef] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function loadCover(projectId: string) {
+    const { data } = await supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", projectId).maybeSingle();
+    setConcepts((data?.concepts as CoverConcept[] | undefined) ?? []);
+    setFinalCoverRef(data?.final_cover_ref ?? null);
+  }
 
   useEffect(() => {
     if (!effectiveId) return;
     let cancelled = false;
     (async () => {
       setConcepts(null);
-      const { data } = await supabase.from("cover_department").select("concepts").eq("project_id", effectiveId).maybeSingle();
-      if (!cancelled) setConcepts((data?.concepts as CoverConcept[] | undefined) ?? []);
+      setFinalCoverRef(null);
+      const { data } = await supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", effectiveId).maybeSingle();
+      if (!cancelled) {
+        setConcepts((data?.concepts as CoverConcept[] | undefined) ?? []);
+        setFinalCoverRef(data?.final_cover_ref ?? null);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [effectiveId, supabase]);
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !effectiveId) return;
+    setUploading(true);
+    setUploadError(null);
+    const formData = new FormData();
+    formData.append("project_id", effectiveId);
+    formData.append("kind", "cover");
+    formData.append("file", file);
+    const res = await fetch("/api/upload-image", { method: "POST", body: formData });
+    const json = await res.json();
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!res.ok) {
+      setUploadError(json.error || "Could not upload that image.");
+      return;
+    }
+    await loadCover(effectiveId);
+  }
 
   return (
     <>
@@ -49,6 +83,32 @@ export default function CoverDesignerPage() {
         <p className="subtitle">Cover concepts InkFrame drafted for your books.</p>
 
         <ProjectPicker projects={projects} selectedId={effectiveId} onSelect={setSelectedId} />
+
+        {effectiveId && (
+          <div className="panel" style={{ marginBottom: "20px" }}>
+            <div style={{ fontWeight: 600, marginBottom: "10px" }}>Your Cover</div>
+            {finalCoverRef ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={finalCoverRef}
+                alt="Uploaded cover"
+                style={{ maxWidth: "260px", width: "100%", borderRadius: "8px", display: "block", marginBottom: "10px" }}
+              />
+            ) : (
+              <p className="hint" style={{ marginBottom: "10px" }}>
+                No cover set yet — upload your own, or let a generated concept below be exported instead.
+              </p>
+            )}
+            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={handleUpload} disabled={uploading} style={{ display: "none" }} id="cover-upload-input" />
+            <label htmlFor="cover-upload-input" className="btn btn-secondary" style={{ cursor: uploading ? "default" : "pointer", display: "inline-block" }}>
+              {uploading ? "Uploading…" : finalCoverRef ? "Replace Cover" : "Upload Your Own Cover"}
+            </label>
+            {uploadError && <p className="hint" style={{ color: "var(--redGlow)", marginTop: "8px" }}>{uploadError}</p>}
+            <p className="hint" style={{ marginTop: "8px", fontSize: "11.5px" }}>
+              An uploaded cover always takes priority in your exported manuscript over the generated concepts below.
+            </p>
+          </div>
+        )}
 
         {effectiveId && (
           <div className="panel">

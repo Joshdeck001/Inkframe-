@@ -7,14 +7,16 @@ import { css, title as pageTitle } from "@/content/job-progress";
 
 export const dynamic = "force-dynamic";
 
-// Research (Step 8's category-research half) doesn't post anything back to
-// this page yet, so it stays visually pending regardless of status — every
-// other stage is real (Steps 5-9) and only ever marked done in the order
-// it's actually run: Blueprint, Writing, Quality, Cover, Images, Metadata,
-// Compliance, Export (the DOCX Formatting Department produces).
+// Blueprint, Writing, Quality, Cover, Images, Metadata, Compliance, Export
+// (the DOCX Formatting Department produces) are all real and only ever
+// marked done in the order they're actually run, driven by projects.status.
+// Research is the odd one out — it runs once, synchronously, during the
+// wizard's Step 8 (/api/research), before writing even starts, so it isn't
+// tied to a pipeline status at all; its "done" state comes from whether
+// research_notes rows actually exist for the project (see hasResearch below).
 const PIPELINE = [
   { key: "blueprint", label: "Blueprint", icon: "✓", implemented: true },
-  { key: "research", label: "Research", icon: "🔎", implemented: false },
+  { key: "research", label: "Research", icon: "🔎", implemented: true },
   { key: "writing", label: "Writing", icon: "✎", implemented: true },
   { key: "quality", label: "Quality", icon: "◈", implemented: true },
   { key: "cover", label: "Cover", icon: "🎨", implemented: true },
@@ -97,9 +99,11 @@ type MetadataData = {
   categories: string[];
 };
 
-type CoverConcept = { prompt: string; rationale: string; status: string };
+type CoverConcept = { prompt: string; rationale: string; status: string; image_ref: string | null };
 
 type ComplianceCheck = { check_type: string; status: string; detail: string };
+
+type ResearchNote = { research_type: string | null; content: string | null };
 
 function JobProgressBody() {
   const router = useRouter();
@@ -113,6 +117,7 @@ function JobProgressBody() {
   const [metadata, setMetadata] = useState<MetadataData | null>(null);
   const [coverConcepts, setCoverConcepts] = useState<CoverConcept[]>([]);
   const [complianceChecks, setComplianceChecks] = useState<ComplianceCheck[]>([]);
+  const [researchNotes, setResearchNotes] = useState<ResearchNote[]>([]);
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
 
   useEffect(() => {
@@ -124,7 +129,7 @@ function JobProgressBody() {
     let cancelled = false;
 
     async function load() {
-      const [{ data: proj }, { count }, { data: meta }, { data: cover }, { data: compliance }] = await Promise.all([
+      const [{ data: proj }, { count }, { data: meta }, { data: cover }, { data: compliance }, { data: research }] = await Promise.all([
         supabase
           .from("projects")
           .select("status, project_identity(working_title, subtitle), project_scope(words_written, target_word_count)")
@@ -142,6 +147,11 @@ function JobProgressBody() {
           .select("check_type, status, detail")
           .eq("project_id", projectId)
           .order("checked_at", { ascending: false }),
+        supabase
+          .from("research_notes")
+          .select("research_type, content")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: false }),
       ]);
       if (!cancelled) {
         setProject((proj as unknown as ProjectData) ?? null);
@@ -149,6 +159,7 @@ function JobProgressBody() {
         setMetadata(meta ?? null);
         setCoverConcepts((cover?.concepts as CoverConcept[] | undefined) ?? []);
         setComplianceChecks((compliance as ComplianceCheck[] | undefined) ?? []);
+        setResearchNotes((research as ResearchNote[] | undefined) ?? []);
         setLoading(false);
       }
     }
@@ -254,10 +265,14 @@ function JobProgressBody() {
 
             <div className="pipeline">
               {PIPELINE.map((step, i) => {
-                // Never mark a not-yet-built stage done/active, no matter what the
-                // index math implies — Research is the one stage still pending.
-                const done = step.implemented && (i < stageIndex || (i === stageIndex && status === "EXPORTED"));
-                const active = step.implemented && i === stageIndex && status !== "EXPORTED";
+                // Research isn't gated by projects.status at all (it runs once,
+                // synchronously, during the wizard) — its done state comes from
+                // whether research_notes rows actually exist, not stage index.
+                const done =
+                  step.key === "research"
+                    ? researchNotes.length > 0
+                    : step.implemented && (i < stageIndex || (i === stageIndex && status === "EXPORTED"));
+                const active = step.key !== "research" && step.implemented && i === stageIndex && status !== "EXPORTED";
                 return (
                   <div key={step.key} className={`pipe-step${done ? " done" : ""}${active ? " active" : ""}`}>
                     <div className="pipe-dot">{done ? "✓" : step.icon}</div>
@@ -305,17 +320,39 @@ function JobProgressBody() {
           <div className="main-card">
             <div className="task-row" style={{ borderTop: "none", paddingTop: 0 }}>
               <span className="lbl" style={{ fontWeight: 700, color: "var(--ink)" }}>
-                Cover Department — concept prompts
+                Cover Department
               </span>
             </div>
-            <p className="hint" style={{ margin: "4px 0 10px" }}>
-              Prompts only for now — rendering actual artwork needs an image-generation key that isn&apos;t
-              wired in yet.
-            </p>
             {coverConcepts.map((c, i) => (
               <div key={i} style={{ marginBottom: "10px", fontSize: "12.5px", color: "var(--muted)" }}>
+                {c.image_ref && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={c.image_ref}
+                    alt={`Cover concept ${i + 1}`}
+                    style={{ maxWidth: "160px", width: "100%", borderRadius: "6px", display: "block", marginBottom: "6px" }}
+                  />
+                )}
                 <strong style={{ color: "var(--ink)" }}>Concept {i + 1}:</strong> {c.prompt}
                 <div style={{ fontSize: "11.5px", marginTop: "2px" }}>{c.rationale}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {researchNotes.length > 0 && (
+          <div className="main-card">
+            <div className="task-row" style={{ borderTop: "none", paddingTop: 0 }}>
+              <span className="lbl" style={{ fontWeight: 700, color: "var(--ink)" }}>
+                Research
+              </span>
+            </div>
+            {researchNotes.map((n, i) => (
+              <div key={i} style={{ marginBottom: "10px", fontSize: "12.5px", color: "var(--muted)" }}>
+                {n.research_type && (
+                  <strong style={{ color: "var(--ink)" }}>{n.research_type.replace(/-/g, " ")}: </strong>
+                )}
+                {n.content}
               </div>
             ))}
           </div>

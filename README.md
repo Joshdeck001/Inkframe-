@@ -55,11 +55,12 @@ Steps 1-15 of the build plan are done:
    then approved either way. Once every chapter in a project is `approved`,
    status moves to `READY_FOR_REVIEW`.
 
-   `job-progress`'s 8-step pipeline only ever marks Blueprint/Writing/Quality
-   as done or active — Research/Cover/Metadata/Compliance/Export stay
-   visually pending no matter the project's status, because none of those
-   are automated yet (Steps 8-10) and marking them "done" would be exactly
-   the kind of fabricated progress the spec explicitly prohibits.
+   `job-progress`'s pipeline reflects real status for every stage now —
+   Blueprint, Research, Writing, Quality, Cover, Images, Metadata,
+   Compliance, and Export are all automated and each only ever marks
+   itself done once that department's own cron tick (or, for Research,
+   the wizard's synchronous `/api/research` call) actually reports it —
+   never fabricated progress.
 
 ## Local setup
 
@@ -496,13 +497,13 @@ schema (Step 6) but nothing ever populated them. They now do, through a
 new pipeline stage — `GENERATING_IMAGES`, between cover art and metadata —
 and `lib/image-department.ts`:
 
-- **Only runs when the wizard's Step 7 asked for it.** "No Images" and
-  "I'll upload my own" skip straight through untouched — manual upload
-  still isn't built. "Generate automatically" or "Mix of both" only
-  trigger real placement + generation when the user also said yes to
-  "recommend placements" on that same step; saying no there leaves the
-  book to move on with no interior images, same as before this feature
-  existed.
+- **Only runs automatic placement when the wizard's Step 7 asked for it.**
+  "No Images" and "I'll upload my own" skip straight through untouched.
+  "Generate automatically" or "Mix of both" only trigger real placement +
+  generation when the user also said yes to "recommend placements" on
+  that same step; saying no there leaves the book to move on with no
+  automatic interior images — manual upload (below) is always available
+  regardless of this setting.
 - **Placement is a real AI decision, not a fixed rule.** The first tick
   for a project sends the chapter list (number, title, objective) to the
   same 3-provider text fallback as everything else (`lib/ai-client.ts`)
@@ -521,6 +522,19 @@ and `lib/image-department.ts`:
 - **`/images` now shows real placements and artwork** per book instead of
   the old "not built yet" placeholder — chapter, placement location,
   prompt, and the generated image once one exists.
+- **Manual image upload is real now, on both `/cover` and `/images`**
+  (`/api/upload-image`) — upload your own cover art (always available,
+  regardless of any AI-generated concepts, and takes priority over them
+  in the exported manuscript via `cover_department.final_cover_ref`,
+  a column that existed in the original schema and was never used until
+  now) or your own interior chapter images (creates a real
+  `image_placements` row with `status: 'uploaded'` — the fourth status
+  value the schema always allowed but nothing ever set). The `covers`/
+  `manuscript-images` buckets are server-write-only by design (no client
+  insert policy), so the upload route verifies project ownership through
+  the caller's own RLS-scoped session, then writes with the service-role
+  client. A manually uploaded interior image can be removed again; an
+  uploaded cover is simply replaced by uploading another.
 
 ## The Professional Book Formatting Engine
 
@@ -673,7 +687,12 @@ things that need a real account to verify (confirm the Admin Panel and AI
 Copilot behave as expected against your live Supabase project, and that
 cover and interior image generation actually produce artwork once billing
 is enabled on OpenAI or Google AI Studio/Cloud) or genuine product
-decisions rather than more scaffolding — e.g. manual image upload for the
-"I'll upload my own" workflow, or building the Templates feature that's
-currently honestly labeled "not built yet." See the roadmap in
+decisions rather than more scaffolding — e.g. building the Templates
+feature that's currently honestly labeled "not built yet" (a case can be
+made it's largely redundant now that the Book Design Profile system
+handles professional formatting automatically per book type/trim size —
+worth a real product conversation before building it, not just building
+it because the label says "not built yet"), EPUB/PDF export, or true
+sub-genre design families (romance vs. thriller, etc.) beyond the four
+the `book_type` field currently supports. See the roadmap in
 `InkFrame_Opening_ClaudeCode_Prompt.md` for anything not covered above.

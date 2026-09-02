@@ -121,6 +121,8 @@ function JobProgressBody() {
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
   const [progress, setProgress] = useState<{ signature: string; since: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = pageTitle;
@@ -223,6 +225,34 @@ function JobProgressBody() {
       setDownloadState("idle");
     } catch {
       setDownloadState("error");
+    }
+  }
+
+  async function handleReopenBlueprint() {
+    if (!projectId) return;
+    if (
+      !confirm(
+        "This stops the Writing Agent and deletes every chapter already written for this book, so you can " +
+          "change things like chapter count and regenerate the structure. You'll review and approve the new " +
+          "blueprint before it starts writing again. Continue?"
+      )
+    ) {
+      return;
+    }
+    setReopening(true);
+    setReopenError(null);
+    try {
+      const res = await fetch("/api/reopen-blueprint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Couldn't reopen this book.");
+      router.push(`/wizard?project=${projectId}`);
+    } catch (e) {
+      setReopenError(e instanceof Error ? e.message : "Couldn't reopen this book.");
+      setReopening(false);
     }
   }
 
@@ -441,6 +471,11 @@ function JobProgressBody() {
           <button className="btn btn-secondary" onClick={() => router.push("/dashboard")}>
             Back to Dashboard
           </button>
+          {project && status !== "EXPORTED" && (
+            <button className="btn btn-secondary" onClick={handleReopenBlueprint} disabled={reopening}>
+              {reopening ? "Opening…" : "✎ Restructure This Book"}
+            </button>
+          )}
           {isReady ? (
             <>
               <button className="btn btn-secondary" onClick={() => handleDownload("docx")} disabled={downloadState === "loading"}>
@@ -467,6 +502,11 @@ function JobProgressBody() {
         {downloadState === "error" && (
           <p style={{ color: "var(--red)", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
             Couldn&apos;t get a download link. Try again in a moment.
+          </p>
+        )}
+        {reopenError && (
+          <p style={{ color: "var(--red)", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
+            {reopenError}
           </p>
         )}
       </div>

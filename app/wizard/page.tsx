@@ -287,8 +287,14 @@ function WizardBody() {
         }
       }
 
+    // Landing here at all (rather than being redirected to job-progress
+    // above) means the project's status already says it needs a blueprint
+    // (re-)approval — reopen-blueprint sets that status explicitly when
+    // pulling an already-writing project back in for restructuring, so an
+    // existing blueprint is shown as the starting point to edit/regenerate
+    // even if it was previously approved, rather than being ignored.
     const bp = blueprints?.[0];
-    if (bp && bp.approval_status !== "approved") {
+    if (bp) {
       setBlueprint(bp.structure);
       setBlueprintId(bp.id);
       setBlueprintVersion(bp.version);
@@ -421,6 +427,22 @@ function WizardBody() {
     setBlueprintLoading(true);
     setBlueprintError(null);
     try {
+      // /api/blueprint reads project_scope straight from the database, not
+      // from this page's state — so a chapter count (or word count/depth)
+      // changed on step 4 after this project already existed (e.g. editing
+      // an already-approved book via "Restructure This Book") has to be
+      // written back before regenerating, or the AI never sees the change.
+      const { error: scopeError } = await supabase
+        .from("project_scope")
+        .update({
+          target_word_count: targetWordCount || null,
+          estimated_chapter_count: estimatedChapterCount || null,
+          desired_depth: desiredDepth || null,
+          trim_size: trimSize || null,
+        })
+        .eq("project_id", pid);
+      if (scopeError) throw new Error(scopeError.message);
+
       const res = await fetch("/api/blueprint", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1084,7 +1106,11 @@ function WizardBody() {
         {currentStep === 9 && (
           <div className="step active">
             <div className="step-title">Review your Book Blueprint</div>
-            <div className="step-sub">Nothing is written until you approve this structure.</div>
+            <div className="step-sub">
+              Nothing is written until you approve this structure. To change the chapter count, target word
+              count, or trim size, click Back to Step 4 (Book Size), update it there, then come back here and hit
+              &quot;Regenerate&quot;.
+            </div>
 
             {blueprintLoading && (
               <div className="blueprint-box" style={{ textAlign: "center", padding: "36px 20px" }}>

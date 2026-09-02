@@ -84,7 +84,11 @@ export const POST = withJsonErrors(async (request: Request) => {
     audience?.core_promise ? `Core promise: ${audience.core_promise}` : null,
     audience?.purpose ? `Purpose: ${audience.purpose}` : null,
     scope?.target_word_count ? `Target total word count: ${scope.target_word_count}` : null,
-    scope?.estimated_chapter_count ? `Approximate chapter count: ${scope.estimated_chapter_count}` : null,
+    scope?.estimated_chapter_count
+      ? `Required chapter count: EXACTLY ${scope.estimated_chapter_count} chapters total across every part — ` +
+        `not approximately, exactly that many. Count every chapter in your output before finishing and adjust ` +
+        `word_allocation per chapter (not the chapter count) to fit the target word count.`
+      : null,
     scope?.desired_depth ? `Desired depth: ${scope.desired_depth}` : null,
     style?.tone ? `Tone: ${style.tone}` : null,
     style?.pov ? `POV: ${style.pov}` : null,
@@ -104,8 +108,10 @@ export const POST = withJsonErrors(async (request: Request) => {
         "Parts, each containing Chapters with an objective, key points, and a word allocation. Redistribute " +
         "word allocation by chapter importance — do not force every chapter to the same length. Chapter " +
         "numbers must be sequential starting at 1 across the whole book. The sum of all chapters' " +
-        "word_allocation should land close to the target total word count when one is given. Call the " +
-        "generate_blueprint tool with the result — do not respond with prose.",
+        "word_allocation should land close to the target total word count when one is given. If a required " +
+        "chapter count is given, it is a hard constraint, not a suggestion — the total number of chapters " +
+        "across all parts in your output must exactly match it, splitting chapters across parts however makes " +
+        "sense for the book. Call the generate_blueprint tool with the result — do not respond with prose.",
       userContent: promptFacts || "No details were provided beyond the book type.",
       tool: BLUEPRINT_TOOL,
       maxTokens: 8000,

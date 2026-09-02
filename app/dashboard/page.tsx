@@ -193,6 +193,19 @@ export default function DashboardPage() {
     router.push("/wizard");
   }
 
+  // job-progress is the one page that actually has working download
+  // buttons once a book is ready — /publish is just a checklist with no
+  // download link of its own, so routing a finished book there was a dead
+  // end. Setup-stage books still need the wizard, since job-progress has
+  // nothing to show for a project with no approved blueprint yet.
+  function openProject(id: string, status: string) {
+    if (["IDEA", "BLUEPRINT", "AWAITING_APPROVAL"].includes(status)) {
+      router.push(`/wizard?project=${id}`);
+    } else {
+      router.push(`/job-progress?project=${id}`);
+    }
+  }
+
   const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
 
   const visibleProjects = (() => {
@@ -640,12 +653,19 @@ export default function DashboardPage() {
                 <div className="panel" style={{ marginTop: "24px" }}>
                   <div className="panel-head">
                     <h3>Recent Projects</h3>
-                    <span className="view-all">View All</span>
+                    <span className="view-all" style={{ cursor: "pointer" }} onClick={() => router.push("/books")}>
+                      View All
+                    </span>
                   </div>
                   <div id="projects-list">
                     {visibleProjects && visibleProjects.length > 0 ? (
                       visibleProjects.map((p) => (
-                        <div className="project-row" key={p.id}>
+                        <div
+                          className="project-row"
+                          key={p.id}
+                          style={{ cursor: "pointer" }}
+                          onClick={() => openProject(p.id, p.status)}
+                        >
                           <div className="book-thumb">IF</div>
                           <div>
                             <div className="project-name">

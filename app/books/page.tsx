@@ -58,10 +58,12 @@ export default function BooksPage() {
     };
   }, [supabase]);
 
+  // job-progress is the one page with real download buttons once a book is
+  // ready, plus its own "Continue to Publish ->" button for when that
+  // checklist is actually wanted — /publish itself has no download link at
+  // all, so sending a finished book straight there was a dead end.
   function openProject(id: string, status: string) {
-    if (["READY_FOR_REVIEW", "USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(status)) {
-      router.push(`/publish?project=${id}`);
-    } else if (status === "IDEA" || status === "BLUEPRINT" || status === "AWAITING_APPROVAL") {
+    if (status === "IDEA" || status === "BLUEPRINT" || status === "AWAITING_APPROVAL") {
       router.push(`/wizard?project=${id}`);
     } else {
       router.push(`/job-progress?project=${id}`);

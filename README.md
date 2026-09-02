@@ -103,9 +103,9 @@ All in `.env.local` (gitignored, never committed) — see
    sequence job-progress's pipeline icons already show them in (Cover →
    Metadata → Compliance → Export), each reading the same project record:
    - `/api/cron/cover-department` drafts 3 cover concepts as
-     image-generation *prompts* (`cover_department.concepts`) — actually
-     rendering artwork needs an image API key that isn't wired in yet, and
-     the UI says so rather than implying a real image exists.
+     image-generation prompts, then attempts real artwork for each one
+     (`cover_department.concepts`) — see "Real cover-art generation"
+     below for how and its billing prerequisite.
    - `/api/cron/metadata-department` writes real description/keywords(7,
      <=50 chars each)/categories to `metadata_department`.
    - `/api/cron/compliance-department` runs **deterministic** checks (no
@@ -121,7 +121,16 @@ All in `.env.local` (gitignored, never committed) — see
      verifying the requester owns the project — there's no direct client
      read access to the bucket. Only `docx` is produced; EPUB/PDF aren't
      implemented, and `formatting_jobs.output_formats` only ever lists
-     what was actually generated.
+     what was actually generated. **Real cover and interior images are
+     embedded directly in the file, not just referenced** — the department
+     fetches the actual generated artwork (from the `covers` and
+     `manuscript-images` buckets) at export time and inserts it as real
+     image data (`docx`'s `ImageRun`, cover centered on the title page,
+     each interior image right under its chapter heading), so opening the
+     downloaded `.docx` in Word/Google Docs shows the pictures inline —
+     it's not just prompt text. With no real artwork generated yet (no
+     billing enabled), the manuscript exports exactly as it always did:
+     text only, no broken image placeholders.
 
    Once formatting finishes, status reaches `READY_FOR_REVIEW` and
    `job-progress` shows the real metadata, cover concept prompts, and

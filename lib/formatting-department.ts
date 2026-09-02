@@ -1,7 +1,35 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak, ImageRun, AlignmentType } from "docx";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQualityGate } from "@/lib/quality-gate";
 import { getPausedProjectIds } from "@/lib/production-paused";
+
+type DocxImageType = "jpg" | "png" | "gif" | "bmp";
+
+/**
+ * Real cover/interior artwork lives in public storage buckets as plain
+ * URLs (cover_department.concepts[].image_ref, image_placements.file_ref)
+ * — docx's ImageRun needs actual bytes, not a URL, so this fetches them at
+ * export time. Best-effort: a fetch failure just means that one image is
+ * skipped, never a reason to fail the whole manuscript export.
+ */
+async function fetchImage(url: string): Promise<{ buffer: Buffer; type: DocxImageType } | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") || "";
+    const type: DocxImageType = contentType.includes("jpeg")
+      ? "jpg"
+      : contentType.includes("gif")
+        ? "gif"
+        : contentType.includes("bmp")
+          ? "bmp"
+          : "png";
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return { buffer, type };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Assembles the approved manuscript into a DOCX file and stores it in the
@@ -27,14 +55,27 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
   if (projectQueryError) throw new Error(`Could not query projects: ${projectQueryError.message}`);
   if (!project) return { processed: false, detail: "No projects awaiting formatting." };
 
-  const [{ data: identity }, { data: chapters }] = await Promise.all([
+  const [{ data: identity }, { data: chapters }, { data: cover }, { data: placements }] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
     supabase
       .from("chapters")
-      .select("chapter_number, title, content")
+      .select("id, chapter_number, title, content")
       .eq("project_id", project.id)
       .order("chapter_number", { ascending: true }),
+    supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", project.id).maybeSingle(),
+    supabase.from("image_placements").select("chapter_id, file_ref").eq("project_id", project.id).eq("status", "generated"),
   ]);
+
+  const coverConcepts = (cover?.concepts as { image_ref: string | null; status: string }[] | undefined) ?? [];
+  const coverImageUrl = cover?.final_cover_ref || coverConcepts.find((c) => c.status === "generated" && c.image_ref)?.image_ref || null;
+  const coverImage = coverImageUrl ? await fetchImage(coverImageUrl) : null;
+
+  const interiorImages = new Map<string, { buffer: Buffer; type: DocxImageType }>();
+  for (const p of placements ?? []) {
+    if (!p.chapter_id || !p.file_ref) continue;
+    const image = await fetchImage(p.file_ref);
+    if (image) interiorImages.set(p.chapter_id, image);
+  }
 
   const { data: formattingJob, error: jobError } = await supabase
     .from("formatting_jobs")
@@ -45,6 +86,15 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
 
   try {
     const titleParagraphs = [
+      ...(coverImage
+        ? [
+            new Paragraph({
+              children: [new ImageRun({ type: coverImage.type, data: coverImage.buffer, transformation: { width: 400, height: 400 } })],
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 200 },
+            }),
+          ]
+        : []),
       new Paragraph({
         text: identity?.working_title || "Untitled Project",
         heading: HeadingLevel.TITLE,
@@ -54,17 +104,29 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
-    const chapterParagraphs = (chapters ?? []).flatMap((chapter) => [
-      new Paragraph({
-        text: `Chapter ${chapter.chapter_number}: ${chapter.title}`,
-        heading: HeadingLevel.HEADING_1,
-      }),
-      ...chapter.content
-        .split(/\n{2,}/)
-        .filter((p: string) => p.trim().length > 0)
-        .map((p: string) => new Paragraph({ children: [new TextRun(p.trim())], spacing: { after: 200 } })),
-      new Paragraph({ children: [new PageBreak()] }),
-    ]);
+    const chapterParagraphs = (chapters ?? []).flatMap((chapter) => {
+      const image = interiorImages.get(chapter.id);
+      return [
+        new Paragraph({
+          text: `Chapter ${chapter.chapter_number}: ${chapter.title}`,
+          heading: HeadingLevel.HEADING_1,
+        }),
+        ...(image
+          ? [
+              new Paragraph({
+                children: [new ImageRun({ type: image.type, data: image.buffer, transformation: { width: 300, height: 300 } })],
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 200 },
+              }),
+            ]
+          : []),
+        ...chapter.content
+          .split(/\n{2,}/)
+          .filter((p: string) => p.trim().length > 0)
+          .map((p: string) => new Paragraph({ children: [new TextRun(p.trim())], spacing: { after: 200 } })),
+        new Paragraph({ children: [new PageBreak()] }),
+      ];
+    });
 
     const doc = new Document({
       sections: [{ children: [...titleParagraphs, ...chapterParagraphs] }],
@@ -96,9 +158,10 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
 
     await supabase.from("projects").update({ status: "READY_FOR_REVIEW" }).eq("id", project.id);
 
+    const embeddedImages = (coverImage ? 1 : 0) + interiorImages.size;
     return {
       processed: true,
-      detail: `Project ${project.id}: manuscript.docx generated, quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
+      detail: `Project ${project.id}: manuscript.docx generated (${embeddedImages} image(s) embedded), quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
     };
   } catch (e) {
     await supabase.from("formatting_jobs").update({ status: "failed" }).eq("id", formattingJob.id);

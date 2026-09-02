@@ -1,12 +1,11 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title as pageTitle } from "@/content/wizard";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 import { totalWords } from "@/lib/blueprint-schema";
-import { useEffect } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +50,63 @@ function Pill({
       {children}
     </div>
   );
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
+/**
+ * Everything the wizard needs to resume an in-progress project, fetched
+ * together so the caller can wrap the whole batch in one timeout/try-catch
+ * instead of leaving any single failed request able to hang the "Loading
+ * your book…" screen forever (a real bug found on a slow mobile connection
+ * — Promise.all rejecting with nothing catching it left resuming stuck true).
+ */
+async function loadResumeData(supabase: ReturnType<typeof createClient>, projectId: string) {
+  const [
+    { data: project },
+    { data: identity },
+    { data: audience },
+    { data: scope },
+    { data: style },
+    { data: platform },
+    { data: images },
+    { data: riskChecks },
+    { data: notes },
+    { data: blueprints },
+  ] = await Promise.all([
+    supabase.from("projects").select("*").eq("id", projectId).single(),
+    supabase.from("project_identity").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase.from("project_audience").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase.from("project_scope").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase.from("project_style").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase.from("project_platform").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase.from("project_images").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase
+      .from("title_risk_checks")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("checked_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("research_notes")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("research_type", "genre")
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("book_blueprint")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("version", { ascending: false })
+      .limit(1),
+  ]);
+  return { project, identity, audience, scope, style, platform, images, riskChecks, notes, blueprints };
 }
 
 function WizardBody() {
@@ -123,72 +179,58 @@ function WizardBody() {
     document.title = pageTitle;
   }, []);
 
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
   // Resuming an in-progress book (from My Books' "Continue Setup") instead
   // of starting a blank wizard and losing everything already entered.
   // Loads every field the wizard itself would have saved, then jumps
   // straight to wherever that project actually left off: step 9 with its
   // existing draft blueprint loaded if one was already generated, or step 8
-  // (re-running research only if it was never done) if it wasn't.
-  useEffect(() => {
-    if (!resumeProjectId) return;
-    let cancelled = false;
-    (async () => {
-      const [
-        { data: project },
-        { data: identity },
-        { data: audience },
-        { data: scope },
-        { data: style },
-        { data: platform },
-        { data: images },
-        { data: riskChecks },
-        { data: notes },
-        { data: blueprints },
-      ] = await Promise.all([
-        supabase.from("projects").select("*").eq("id", resumeProjectId).single(),
-        supabase.from("project_identity").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase.from("project_audience").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase.from("project_scope").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase.from("project_style").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase.from("project_platform").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase.from("project_images").select("*").eq("project_id", resumeProjectId).maybeSingle(),
-        supabase
-          .from("title_risk_checks")
-          .select("*")
-          .eq("project_id", resumeProjectId)
-          .order("checked_at", { ascending: false })
-          .limit(1),
-        supabase
-          .from("research_notes")
-          .select("*")
-          .eq("project_id", resumeProjectId)
-          .eq("research_type", "genre")
-          .order("created_at", { ascending: false })
-          .limit(1),
-        supabase
-          .from("book_blueprint")
-          .select("*")
-          .eq("project_id", resumeProjectId)
-          .order("version", { ascending: false })
-          .limit(1),
-      ]);
-      if (cancelled) return;
-
-      if (!project) {
-        setResumeError("Couldn't find that book — it may have been deleted.");
+  // (re-running research only if it was never done) if it wasn't. Pulled
+  // out of the effect (rather than an inline IIFE) so the "Try Again"
+  // button on a failed load can re-run the exact same thing. Doesn't set
+  // resuming/resumeError itself — the initial mount already starts with
+  // resuming true, and the "Try Again" button sets both before calling this,
+  // so this can run without any synchronous setState of its own.
+  async function attemptResume(pid: string) {
+    let loaded: Awaited<ReturnType<typeof loadResumeData>>;
+    try {
+      loaded = await withTimeout(
+        loadResumeData(supabase, pid),
+        20000,
+        "This is taking too long to load — check your connection and try again."
+      );
+    } catch (e) {
+      if (!unmountedRef.current) {
+        setResumeError(e instanceof Error ? e.message : "Couldn't load this book. Try again.");
         setResuming(false);
-        return;
       }
+      return;
+    }
+    if (unmountedRef.current) return;
 
-      // Already past the wizard's part of the job — nothing left here to
-      // resume, so send it to where its real progress actually lives.
-      if (!["IDEA", "BLUEPRINT", "AWAITING_APPROVAL"].includes(project.status)) {
-        router.replace(`/job-progress?project=${resumeProjectId}`);
-        return;
-      }
+    const { project, identity, audience, scope, style, platform, images, riskChecks, notes, blueprints } = loaded;
 
-      setProjectId(resumeProjectId);
-      setBookType(project.book_type || "");
+    if (!project) {
+      setResumeError("Couldn't find that book — it may have been deleted.");
+      setResuming(false);
+      return;
+    }
+
+    // Already past the wizard's part of the job — nothing left here to
+    // resume, so send it to where its real progress actually lives.
+    if (!["IDEA", "BLUEPRINT", "AWAITING_APPROVAL"].includes(project.status)) {
+      router.replace(`/job-progress?project=${pid}`);
+      return;
+    }
+
+    setProjectId(pid);
+    setBookType(project.book_type || "");
 
       if (identity) {
         setWorkingTitle(identity.working_title || "");
@@ -245,25 +287,31 @@ function WizardBody() {
         }
       }
 
-      const bp = blueprints?.[0];
-      if (bp && bp.approval_status !== "approved") {
-        setBlueprint(bp.structure);
-        setBlueprintId(bp.id);
-        setBlueprintVersion(bp.version);
-        setBlueprintApproved(false);
-        setCurrentStep(9);
-      } else {
-        setCurrentStep(8);
-        if (!risk) {
-          await generateResearch(resumeProjectId);
-        }
+    const bp = blueprints?.[0];
+    if (bp && bp.approval_status !== "approved") {
+      setBlueprint(bp.structure);
+      setBlueprintId(bp.id);
+      setBlueprintVersion(bp.version);
+      setBlueprintApproved(false);
+      setCurrentStep(9);
+    } else {
+      setCurrentStep(8);
+      if (!risk) {
+        await generateResearch(pid);
       }
+    }
 
-      setResuming(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setResuming(false);
+  }
+
+  useEffect(() => {
+    if (!resumeProjectId) return;
+    // setTimeout defers the call out of this synchronous effect body —
+    // attemptResume eventually calls setState (after its first await), and
+    // the lint rule can't otherwise tell that apart from a genuine
+    // synchronous-setState-in-effect footgun.
+    const timer = setTimeout(() => attemptResume(resumeProjectId), 0);
+    return () => clearTimeout(timer);
     // Deliberately only re-runs if the project id in the URL itself changes
     // — generateResearch/router/supabase are stable for the component's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -527,9 +575,22 @@ function WizardBody() {
         <div className="wrap" style={{ textAlign: "center", padding: "80px 20px" }}>
           <div className="step-title">Couldn&apos;t load this book</div>
           <p className="step-sub">{resumeError}</p>
-          <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => router.push("/books")}>
-            ← Back to My Books
-          </button>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 20 }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                if (!resumeProjectId) return;
+                setResuming(true);
+                setResumeError(null);
+                attemptResume(resumeProjectId);
+              }}
+            >
+              ↻ Try Again
+            </button>
+            <button className="btn btn-primary" onClick={() => router.push("/books")}>
+              ← Back to My Books
+            </button>
+          </div>
         </div>
       </>
     );

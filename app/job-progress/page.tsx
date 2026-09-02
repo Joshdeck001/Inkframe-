@@ -123,6 +123,9 @@ function JobProgressBody() {
   const [now, setNow] = useState(() => Date.now());
   const [reopening, setReopening] = useState(false);
   const [reopenError, setReopenError] = useState<string | null>(null);
+  const [reformatting, setReformatting] = useState(false);
+  const [reformatError, setReformatError] = useState<string | null>(null);
+  const [reformatDone, setReformatDone] = useState(false);
 
   useEffect(() => {
     document.title = pageTitle;
@@ -253,6 +256,27 @@ function JobProgressBody() {
     } catch (e) {
       setReopenError(e instanceof Error ? e.message : "Couldn't reopen this book.");
       setReopening(false);
+    }
+  }
+
+  async function handleReformat() {
+    if (!projectId) return;
+    setReformatting(true);
+    setReformatError(null);
+    setReformatDone(false);
+    try {
+      const res = await fetch("/api/reformat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Couldn't start re-export.");
+      setReformatDone(true);
+    } catch (e) {
+      setReformatError(e instanceof Error ? e.message : "Couldn't start re-export.");
+    } finally {
+      setReformatting(false);
     }
   }
 
@@ -484,6 +508,9 @@ function JobProgressBody() {
               <button className="btn btn-secondary" onClick={() => handleDownload("epub")} disabled={downloadState === "loading"}>
                 {downloadState === "loading" ? "Preparing…" : "Download (EPUB)"}
               </button>
+              <button className="btn btn-secondary" onClick={handleReformat} disabled={reformatting}>
+                {reformatting ? "Starting…" : "↻ Re-export Manuscript"}
+              </button>
               <button className="btn btn-primary" onClick={() => router.push(`/publish?project=${projectId}`)}>
                 Continue to Publish →
               </button>
@@ -507,6 +534,17 @@ function JobProgressBody() {
         {reopenError && (
           <p style={{ color: "var(--red)", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
             {reopenError}
+          </p>
+        )}
+        {reformatDone && (
+          <p style={{ color: "#5fe3b8", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
+            Re-exporting now — same chapters, rebuilt from the latest formatting fixes. Give it a few minutes,
+            then download again.
+          </p>
+        )}
+        {reformatError && (
+          <p style={{ color: "var(--red)", fontSize: "12.5px", textAlign: "center", marginTop: "8px" }}>
+            {reformatError}
           </p>
         )}
       </div>

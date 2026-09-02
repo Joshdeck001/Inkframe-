@@ -16,6 +16,39 @@ export type CalloutLabel = (typeof CALLOUT_LABELS)[number];
 
 const CALLOUT_PATTERN = new RegExp(`^>\\s*(${CALLOUT_LABELS.join("|")}):\\s*(.*)`);
 
+export type InlineSpan = { text: string; bold: boolean; italic: boolean };
+
+/**
+ * Splits a block's already-extracted text into bold/italic-tagged spans —
+ * the Writing Agent writes ordinary inline Markdown emphasis (**bold**,
+ * *italic*, ***both***) the same way any chat app or Markdown editor
+ * would, but nothing downstream ever interpreted it: every exported
+ * DOCX/EPUB was showing the literal ** characters in the text instead of
+ * actual bold formatting. Each renderer turns these spans into its own
+ * format's real emphasis (a `docx` TextRun's bold/italics props, or an
+ * HTML <strong>/<em>) — this only decides where the boundaries are. An
+ * unpaired marker (no closing pair) is left as plain literal text rather
+ * than guessed at. Deliberately asterisk-only, not the _underscore_ form —
+ * that would misfire on ordinary snake_case-looking words in prose
+ * (`a_variable_name`), and every model this app calls writes emphasis with
+ * asterisks in practice anyway.
+ */
+export function parseInlineEmphasis(text: string): InlineSpan[] {
+  const pattern = /(\*\*\*)([^\s].*?[^\s]|\S)\1|(\*\*)([^\s].*?[^\s]|\S)\3|(\*)([^\s].*?[^\s]|\S)\5/g;
+  const spans: InlineSpan[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) spans.push({ text: text.slice(lastIndex, match.index), bold: false, italic: false });
+    if (match[1] !== undefined) spans.push({ text: match[2], bold: true, italic: true });
+    else if (match[3] !== undefined) spans.push({ text: match[4], bold: true, italic: false });
+    else spans.push({ text: match[6], bold: false, italic: true });
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < text.length) spans.push({ text: text.slice(lastIndex), bold: false, italic: false });
+  return spans.length > 0 ? spans : [{ text, bold: false, italic: false }];
+}
+
 export type ManuscriptBlock =
   | { type: "paragraph"; text: string }
   | { type: "heading"; level: 2 | 3; text: string }

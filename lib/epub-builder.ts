@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { randomUUID } from "crypto";
-import { parseManuscriptBlocks, type ManuscriptBlock } from "@/lib/manuscript-blocks";
+import { parseManuscriptBlocks, parseInlineEmphasis, type ManuscriptBlock } from "@/lib/manuscript-blocks";
 import { numberToWords, type BookDesignFamily } from "@/lib/book-format";
 import type { LoadedImage } from "@/lib/fetch-image";
 
@@ -42,6 +42,26 @@ function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Same job as inlineRuns() in lib/formatting-department.ts, for HTML
+ * instead of docx TextRuns: splits text on inline Markdown emphasis
+ * (parseInlineEmphasis, lib/manuscript-blocks.ts) and wraps each span in
+ * real strong/em tags, escaping each span's own text — never the tags
+ * themselves — so the literal marker characters stop showing up in the
+ * reading app instead of rendering as actual bold/italic text.
+ */
+function escInline(text: string): string {
+  return parseInlineEmphasis(text)
+    .map((span) => {
+      const escaped = esc(span.text);
+      if (span.bold && span.italic) return `<strong><em>${escaped}</em></strong>`;
+      if (span.bold) return `<strong>${escaped}</strong>`;
+      if (span.italic) return `<em>${escaped}</em>`;
+      return escaped;
+    })
+    .join("");
+}
+
 function xhtmlDoc(title: string, bodyClass: string, bodyHtml: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.w3.org/ns/epub" lang="en">
@@ -64,7 +84,7 @@ function blocksToHtml(blocks: ManuscriptBlock[]): string {
     if (block.type === "bullet") {
       const items: string[] = [];
       while (i < blocks.length && blocks[i].type === "bullet") {
-        items.push(`<li>${esc((blocks[i] as { text: string }).text)}</li>`);
+        items.push(`<li>${escInline((blocks[i] as { text: string }).text)}</li>`);
         i++;
       }
       parts.push(`<ul>${items.join("")}</ul>`);
@@ -73,7 +93,7 @@ function blocksToHtml(blocks: ManuscriptBlock[]): string {
     if (block.type === "numbered") {
       const items: string[] = [];
       while (i < blocks.length && blocks[i].type === "numbered") {
-        items.push(`<li>${esc((blocks[i] as { text: string }).text)}</li>`);
+        items.push(`<li>${escInline((blocks[i] as { text: string }).text)}</li>`);
         i++;
       }
       parts.push(`<ol>${items.join("")}</ol>`);
@@ -82,27 +102,27 @@ function blocksToHtml(blocks: ManuscriptBlock[]): string {
 
     switch (block.type) {
       case "paragraph":
-        parts.push(`<p>${esc(block.text)}</p>`);
+        parts.push(`<p>${escInline(block.text)}</p>`);
         break;
       case "heading":
-        parts.push(`<h${block.level}>${esc(block.text)}</h${block.level}>`);
+        parts.push(`<h${block.level}>${escInline(block.text)}</h${block.level}>`);
         break;
       case "code":
         parts.push(`<pre class="code"><code>${block.lines.map(esc).join("\n")}</code></pre>`);
         break;
       case "callout": {
         const cls = `callout-${block.label.toLowerCase().replace(/\s+/g, "-")}`;
-        const paras = block.lines.map((line, idx) => (idx === 0 ? `<strong>${esc(block.label)}:</strong> ${esc(line)}` : esc(line)));
+        const paras = block.lines.map((line, idx) => (idx === 0 ? `<strong>${esc(block.label)}:</strong> ${escInline(line)}` : escInline(line)));
         parts.push(`<div class="callout ${cls}">${paras.map((p) => `<p>${p}</p>`).join("")}</div>`);
         break;
       }
       case "quote":
-        parts.push(`<blockquote><p>${esc(block.text)}</p></blockquote>`);
+        parts.push(`<blockquote><p>${escInline(block.text)}</p></blockquote>`);
         break;
       case "table": {
         const [header, ...rows] = block.rows;
-        const head = `<tr>${header.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
-        const body = rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("");
+        const head = `<tr>${header.map((c) => `<th>${escInline(c)}</th>`).join("")}</tr>`;
+        const body = rows.map((r) => `<tr>${r.map((c) => `<td>${escInline(c)}</td>`).join("")}</tr>`).join("");
         parts.push(`<table><thead>${head}</thead><tbody>${body}</tbody></table>`);
         break;
       }
@@ -117,7 +137,7 @@ function chapterContentHtml(content: string, family: BookDesignFamily): string {
     return content
       .split(/\n{2,}/)
       .filter((p) => p.trim().length > 0)
-      .map((p) => `<p>${esc(p.trim())}</p>`)
+      .map((p) => `<p>${escInline(p.trim())}</p>`)
       .join("\n");
   }
   return blocksToHtml(parseManuscriptBlocks(content));
@@ -262,7 +282,7 @@ reviews and certain other noncommercial uses permitted by copyright law.</p>
 
     const bodyHtml = [
       `<h1 class="chapter-heading">${esc(headingText)}</h1>`,
-      chapter.title ? `<p class="chapter-title">${esc(chapter.title)}</p>` : "",
+      chapter.title ? `<p class="chapter-title">${escInline(chapter.title)}</p>` : "",
       ...imageParts,
       chapterContentHtml(chapter.content, input.family),
     ]

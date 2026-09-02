@@ -34,7 +34,7 @@ import {
   type BookDesignProfile,
 } from "@/lib/book-format";
 import { fitToWidth } from "@/lib/image-dimensions";
-import { parseManuscriptBlocks, type CalloutLabel } from "@/lib/manuscript-blocks";
+import { parseManuscriptBlocks, parseInlineEmphasis, type CalloutLabel } from "@/lib/manuscript-blocks";
 import { fetchImage, type LoadedImage } from "@/lib/fetch-image";
 import { buildEpubBuffer } from "@/lib/epub-builder";
 
@@ -73,6 +73,26 @@ const CALLOUT_FILL: Record<CalloutLabel, string> = {
 // as more contemporary than a full box anyway.
 const CALLOUT_ACCENT = { style: BorderStyle.SINGLE, size: 18, color: "8899AA" };
 
+/**
+ * Splits text on inline Markdown emphasis markers (parseInlineEmphasis,
+ * lib/manuscript-blocks.ts) into real docx TextRuns instead of leaving the
+ * literal marker characters in the output — every base style (a heading's
+ * size, a quote's italics, a callout's default weight) still applies to
+ * every resulting run, on top of whatever that specific span adds.
+ */
+function inlineRuns(text: string, base: { bold?: boolean; italics?: boolean; size?: number; font?: string } = {}) {
+  return parseInlineEmphasis(text).map(
+    (span) =>
+      new TextRun({
+        text: span.text,
+        bold: base.bold || span.bold || undefined,
+        italics: base.italics || span.italic || undefined,
+        size: base.size,
+        font: base.font,
+      })
+  );
+}
+
 function calloutBoxParagraph(children: TextRun[], fill: string, isFirst: boolean, isLast: boolean): Paragraph {
   return new Paragraph({
     shading: { fill, type: ShadingType.CLEAR },
@@ -89,7 +109,7 @@ function quoteParagraph(text: string): Paragraph {
     indent: { left: LIST_INDENT },
     border: { left: { style: BorderStyle.SINGLE, size: 12, color: "999999", space: 8 } },
     spacing: { before: 160, after: 200 },
-    children: [new TextRun({ text, italics: true })],
+    children: inlineRuns(text, { italics: true }),
   });
 }
 
@@ -116,7 +136,7 @@ function buildTable(rows: string[][], widthTwips: number): Table {
                 width: { size: colWidth, type: WidthType.DXA },
                 shading: rowIndex === 0 ? { fill: "E8E8E8", type: ShadingType.CLEAR } : undefined,
                 margins: { top: 80, bottom: 80, left: 100, right: 100 },
-                children: [new Paragraph({ children: [new TextRun({ text: cellText, bold: rowIndex === 0, size: 20 })] })],
+                children: [new Paragraph({ children: inlineRuns(cellText, { bold: rowIndex === 0, size: 20 }) })],
               })
           ),
         })
@@ -141,7 +161,7 @@ function renderStructuredContent(content: string, contentWidth: number): DocElem
   for (const block of parseManuscriptBlocks(content)) {
     switch (block.type) {
       case "paragraph":
-        elements.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 200 }, children: [new TextRun(block.text)] }));
+        elements.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 200 }, children: inlineRuns(block.text) }));
         break;
       case "heading":
         elements.push(
@@ -150,7 +170,7 @@ function renderStructuredContent(content: string, contentWidth: number): DocElem
             keepNext: true,
             alignment: AlignmentType.LEFT,
             spacing: { before: 320, after: 160 },
-            children: [new TextRun({ text: block.text, bold: true, size: block.level === 2 ? 26 : 24 })],
+            children: inlineRuns(block.text, { bold: true, size: block.level === 2 ? 26 : 24 }),
           })
         );
         break;
@@ -160,7 +180,7 @@ function renderStructuredContent(content: string, contentWidth: number): DocElem
             alignment: AlignmentType.LEFT,
             indent: { left: LIST_INDENT, hanging: LIST_INDENT },
             spacing: { after: 120 },
-            children: [new TextRun(`•  ${block.text}`)],
+            children: [new TextRun("•  "), ...inlineRuns(block.text)],
           })
         );
         break;
@@ -170,7 +190,7 @@ function renderStructuredContent(content: string, contentWidth: number): DocElem
             alignment: AlignmentType.LEFT,
             indent: { left: LIST_INDENT, hanging: LIST_INDENT },
             spacing: { after: 120 },
-            children: [new TextRun(`${block.marker}.  ${block.text}`)],
+            children: [new TextRun(`${block.marker}.  `), ...inlineRuns(block.text)],
           })
         );
         break;
@@ -191,8 +211,8 @@ function renderStructuredContent(content: string, contentWidth: number): DocElem
           const isFirst = i === 0;
           const isLast = i === block.lines.length - 1;
           const children = isFirst
-            ? [new TextRun({ text: `${block.label}: `, bold: true }), new TextRun(lineText)]
-            : [new TextRun(lineText)];
+            ? [new TextRun({ text: `${block.label}: `, bold: true }), ...inlineRuns(lineText)]
+            : inlineRuns(lineText);
           elements.push(calloutBoxParagraph(children, fill, isFirst, isLast));
         });
         break;
@@ -216,7 +236,7 @@ function renderProseContent(content: string, profile: BookDesignProfile): Paragr
     .map(
       (p, i) =>
         new Paragraph({
-          children: [new TextRun(p.trim())],
+          children: inlineRuns(p.trim()),
           alignment: profile.bodyAlignment,
           indent: profile.firstLineIndent && i > 0 ? { firstLine: FIRST_LINE_INDENT } : undefined,
           spacing: profile.paragraphSpacingAfter ? { after: profile.paragraphSpacingAfter } : undefined,
@@ -457,7 +477,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
                 new Paragraph({
                   alignment: AlignmentType.CENTER,
                   spacing: { after: 480 },
-                  children: [new TextRun({ text: chapter.title, italics: profile.chapterTitleItalic, bold: !profile.chapterTitleItalic, size: 24 })],
+                  children: inlineRuns(chapter.title, { italics: profile.chapterTitleItalic, bold: !profile.chapterTitleItalic, size: 24 }),
                 }),
               ]
             : []),

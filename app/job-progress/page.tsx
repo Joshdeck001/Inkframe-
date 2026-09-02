@@ -119,6 +119,8 @@ function JobProgressBody() {
   const [complianceChecks, setComplianceChecks] = useState<ComplianceCheck[]>([]);
   const [researchNotes, setResearchNotes] = useState<ResearchNote[]>([]);
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
+  const [progress, setProgress] = useState<{ signature: string; since: number } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     document.title = pageTitle;
@@ -154,13 +156,30 @@ function JobProgressBody() {
           .order("created_at", { ascending: false }),
       ]);
       if (!cancelled) {
-        setProject((proj as unknown as ProjectData) ?? null);
+        const nextProject = (proj as unknown as ProjectData) ?? null;
+        setProject(nextProject);
         setChapterCount(count ?? 0);
         setMetadata(meta ?? null);
         setCoverConcepts((cover?.concepts as CoverConcept[] | undefined) ?? []);
         setComplianceChecks((compliance as ComplianceCheck[] | undefined) ?? []);
         setResearchNotes((research as ResearchNote[] | undefined) ?? []);
         setLoading(false);
+
+        // Every department is a real cron-driven AI call that can fail
+        // (provider outage, no billing/credits on any of the three
+        // configured providers) — when it does, the project's status just
+        // sits still forever with nothing telling the person watching this
+        // page that anything is wrong. This tracks how long the *real*
+        // signal of progress (word count while writing, status otherwise)
+        // has stayed unchanged, so a genuine stall can surface an honest
+        // message instead of spinning silently — the same trust gap fixed
+        // in the wizard, one stage later in the pipeline.
+        const nextStatus = nextProject?.status ?? "BLUEPRINT";
+        const nextWords = nextProject?.project_scope?.words_written ?? 0;
+        const signature = nextStatus === "WRITING" ? `WRITING:${nextWords}` : nextStatus;
+        const pollTime = Date.now();
+        setProgress((prev) => (prev && prev.signature === signature ? prev : { signature, since: pollTime }));
+        setNow(pollTime);
       }
     }
 
@@ -180,6 +199,18 @@ function JobProgressBody() {
   const targetWords = project?.project_scope?.target_word_count ?? 0;
   const pct = targetWords ? Math.min(100, Math.round((words / targetWords) * 100)) : status === "QUEUED" ? 8 : 2;
   const isReady = ["READY_FOR_REVIEW", "USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(status);
+
+  const WATCHED_STATUSES = [
+    "WRITING",
+    "REVIEWING",
+    "GENERATING_COVER",
+    "GENERATING_IMAGES",
+    "GENERATING_METADATA",
+    "COMPLIANCE_CHECK",
+    "FORMATTING",
+  ];
+  const STALL_MS = 6 * 60 * 1000;
+  const looksStuck = !!progress && WATCHED_STATUSES.includes(status) && now - progress.since > STALL_MS;
 
   async function handleDownload(format: "docx" | "epub") {
     if (!projectId) return;
@@ -227,6 +258,19 @@ function JobProgressBody() {
           You can safely close this tab. InkFrame keeps working in the background and updates your dashboard
           automatically.
         </p>
+
+        {looksStuck && (
+          <div className="main-card" style={{ borderColor: "var(--red)", marginBottom: "16px" }}>
+            <p style={{ fontSize: "13px", lineHeight: 1.6 }}>
+              ⚠ This step hasn&apos;t moved in over 6 minutes. InkFrame keeps retrying automatically, but this
+              usually means every configured AI provider (Anthropic, OpenAI, Gemini) is currently unavailable —
+              most often no billing/credits on any of them, sometimes a temporary outage. It isn&apos;t something
+              wrong with this page; nothing here can add credits for you. Check your AI provider billing (each
+              provider&apos;s own console/dashboard) — once one of them is working again, this will resume on its
+              own within a few minutes, no need to redo anything.
+            </p>
+          </div>
+        )}
 
         {!projectId && (
           <div className="main-card">No project specified. Head back to your dashboard to pick one.</div>

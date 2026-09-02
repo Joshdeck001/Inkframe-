@@ -27,11 +27,26 @@ export function getPlanTier(): PlanTier {
  * How many full passes through every department to run within one
  * invocation, before returning. Each pass does at most one unit of work
  * (one chapter, one quality check, etc.) per department, same as always —
- * this just controls how many times that loop repeats back to back, all
- * within the same 60s Hobby-safe maxDuration. A pass that reports nothing
- * left to do stops the loop early regardless of tier, so this is a
- * ceiling, not a forced amount of work.
+ * this just controls how many times that loop repeats back to back within
+ * budgetMsForTier()'s time budget. A pass that reports nothing left to do
+ * stops the loop early regardless of tier, so this is a ceiling, not a
+ * forced amount of work.
  */
 export function maxPassesForTier(tier: PlanTier): number {
   return tier === "pro" ? 8 : 1;
+}
+
+/**
+ * How much wall-clock time /api/cron/all's multi-pass loop is allowed to
+ * use within one invocation, before the route's own maxDuration would cut
+ * it off mid-request. Free stays well under Hobby's 60s ceiling even if
+ * this project is ever downgraded back to it; pro leaves a ~20s safety
+ * margin under the 300s maxDuration set on every AI-calling/cron route
+ * once upgraded to Vercel Pro — see "Deploying on Vercel" in the README
+ * for the maxDuration side of this. Bumping maxPassesForTier() without
+ * also raising this would leave pro's extra passes unreachable in
+ * practice, since the loop would still stop at the old free-tier budget.
+ */
+export function budgetMsForTier(tier: PlanTier): number {
+  return tier === "pro" ? 280000 : 50000;
 }

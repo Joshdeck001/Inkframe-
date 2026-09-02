@@ -7,7 +7,7 @@ import { runMetadataDepartmentTick } from "@/lib/metadata-department";
 import { runComplianceDepartmentTick } from "@/lib/compliance-department";
 import { runFormattingDepartmentTick } from "@/lib/formatting-department";
 import { runTranslationDepartmentTick } from "@/lib/translation-department";
-import { getPlanTier, maxPassesForTier, type PlanTier } from "@/lib/plan-tier";
+import { getPlanTier, maxPassesForTier, budgetMsForTier, type PlanTier } from "@/lib/plan-tier";
 
 export type DepartmentTick = (supabase: SupabaseClient) => Promise<{ processed: boolean; detail: string }>;
 export type DepartmentEntry = { name: string; run: DepartmentTick };
@@ -70,7 +70,7 @@ export async function runPlanTierTick(
 ): Promise<{ tier: PlanTier; passes: PassResult[][] }> {
   const tier = opts.tier ?? getPlanTier();
   const maxPasses = maxPassesForTier(tier);
-  const overallBudgetMs = opts.overallBudgetMs ?? 50000;
+  const overallBudgetMs = opts.overallBudgetMs ?? budgetMsForTier(tier);
   const start = Date.now();
 
   const passes: PassResult[][] = [];

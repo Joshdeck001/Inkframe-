@@ -6,7 +6,7 @@ import { withJsonErrors } from "@/lib/api-guard";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby plan's ceiling — a full blueprint call can take a while
+export const maxDuration = 300; // Vercel Pro's standard ceiling
 
 const BLUEPRINT_TOOL: ToolSpec = {
   name: "generate_blueprint",

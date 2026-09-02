@@ -3,19 +3,22 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { runPlanTierTick } from "@/lib/run-all-departments";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby plan's ceiling — see lib/plan-tier.ts for why this can't be env-driven
+export const maxDuration = 300; // Vercel Pro's standard ceiling — see lib/plan-tier.ts for why frequency can't be env-driven
 
 /**
- * The one cron job registered in vercel.json. Vercel Hobby allows at most
- * 2 cron jobs and only a daily schedule, so every department's tick runs
- * here in sequence instead of each having its own schedule. PLAN_TIER
- * (Settings -> Environment Variables in Vercel's dashboard, no code
- * change) controls how many passes through every department happen per
- * invocation — see lib/plan-tier.ts. The per-department routes under
- * /api/cron/<name> still exist and work the same way — call them directly
- * (with the same Bearer CRON_SECRET) for local testing, or register them
- * individually in vercel.json instead of this one if the project is on a
- * plan without Hobby's cron limits.
+ * The one cron job registered in vercel.json — kept as a single
+ * consolidated job even on Pro (which allows more/shorter-interval crons)
+ * because every department's tick already runs here in sequence within a
+ * shared time budget, and splitting it back into one cron per department
+ * would just mean the same total work spread across more scheduled
+ * invocations for no real benefit. PLAN_TIER (Settings -> Environment
+ * Variables in Vercel's dashboard, no code change) controls how many
+ * passes through every department happen per invocation — see
+ * lib/plan-tier.ts. The per-department routes under /api/cron/<name>
+ * still exist and work the same way — call them directly (with the same
+ * Bearer CRON_SECRET) for local testing, or register them individually in
+ * vercel.json instead of this one if you'd rather have Vercel invoke them
+ * separately.
  */
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");

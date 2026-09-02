@@ -5,7 +5,7 @@ import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby plan's ceiling
+export const maxDuration = 300; // Vercel Pro's standard ceiling
 
 const STRATEGY_TOOL: ToolSpec = {
   name: "draft_ad_strategy",

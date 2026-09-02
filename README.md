@@ -294,91 +294,73 @@ All in `.env.local` (gitignored, never committed) — see
       including that a non-admin's own attempt to insert a message is
       rejected.
 
-## Deploying on Vercel's free (Hobby) plan
+## Deploying on Vercel — Hobby vs. Pro
 
-Hobby caps cron jobs at 2, running at most once a day, and function
-duration at ~60s. The 7 department cron routes run as one consolidated job
-(`/api/cron/all`) instead of 7 separate ones — `lib/run-all-departments.ts`
-runs each department's tick in sequence within a time budget. Every
-route's `maxDuration` is capped at 60. The individual `/api/cron/<name>`
-routes still exist and work the same way (same `Bearer $CRON_SECRET`
-auth) — call them directly for local testing.
+**This project is now on Vercel Pro** (upgraded from Hobby). What that
+changed, concretely, in this repo:
 
-**This project is currently on Vercel's Hobby plan**, so
-`vercel.json`'s schedule for `/api/cron/all` is `"0 6 * * *"` — once a
-day, the most Hobby allows. A schedule shorter than that (e.g. every 5
-minutes, which this project briefly had) makes Vercel silently reject
-every deployment that includes it — the site just keeps serving
-whatever was last built successfully, with no obvious error shown
-anywhere, which is exactly what happened here and cost real time to
-track down. If this project is ever upgraded to Vercel Pro, `PLAN_TIER`
-alone won't make it check in more often (see the next section) — that
-schedule string is the one genuine code change needed, and only then.
+- **Cron frequency** — `vercel.json`'s schedule for `/api/cron/all` is
+  `"*/5 * * * *"` (every 5 minutes). Hobby caps cron at once a day, and a
+  shorter schedule doesn't just get "slowed down" — Vercel **silently
+  rejects the entire deployment** that includes it, with no error visible
+  anywhere except the Deployments list, which is exactly what happened
+  here once already and cost real time to track down (see git history if
+  curious). Now that the account is genuinely on Pro, that rejection
+  doesn't apply and the 5-minute schedule deploys and runs normally. If
+  this project is ever downgraded back to Hobby, that schedule string
+  needs to go back to something like `"0 6 * * *"` (once a day) or every
+  deployment will silently fail again exactly the same way.
+- **Function duration** — every AI-calling and cron route's `maxDuration`
+  is `300` (5 minutes, Pro's standard ceiling) instead of Hobby's 60s cap.
+  This gives slower model responses and longer chapter drafts real
+  headroom to finish instead of risking Vercel killing the function
+  mid-request at the platform level, bypassing any in-process error
+  handling. `lib/plan-tier.ts`'s `budgetMsForTier()` scales the
+  `/api/cron/all` multi-pass loop's own time budget alongside it (50s on
+  free, 280s on pro, leaving a ~20s safety margin under the 300s ceiling)
+  — bumping `maxPassesForTier()` without this would have left pro's extra
+  passes unreachable in practice, still capped by the old 50s budget.
+- The 7 department cron routes still run as one consolidated job
+  (`/api/cron/all`) rather than 7 separate ones, even though Pro allows
+  more/shorter-interval crons — `lib/run-all-departments.ts` runs each
+  department's tick in sequence within that shared time budget, so
+  splitting it back apart would just spread the same total work across
+  more scheduled invocations for no real benefit. The individual
+  `/api/cron/<name>` routes still exist and work the same way (same
+  `Bearer $CRON_SECRET` auth) — call them directly for local testing, or
+  register them individually in `vercel.json` instead of the consolidated
+  one if you'd rather have Vercel invoke them separately.
 
-## How to Upgrade to Vercel Pro Later
+## PLAN_TIER — chapters per wake-up
 
-You can change how much work InkFrame does in the background yourself,
-any time, without editing any code and without needing Claude Code or a
-developer. Here's exactly how.
+Separately from the Hobby/Pro deploy settings above, `PLAN_TIER`
+controls how much work InkFrame's background system does **each time it
+wakes up** — an application-level setting, changeable in Vercel's
+dashboard with no code edit and no redeploy-by-Claude-Code required.
 
-**The setting:** an environment variable named `PLAN_TIER`.
+**The setting:** an environment variable named `PLAN_TIER`, accepting the
+word `free` or the word `pro` (defaults to `free` if unset).
 
-**The values it accepts:** the word `free` or the word `pro`. (If you
-don't set it at all, it behaves as `free`.)
+**Where to change it:** Settings → Environment Variables → find or add
+`PLAN_TIER` → set it to `pro` → **Save** → then **Deployments** → **⋯**
+on the latest deployment → **Redeploy** (required — the setting doesn't
+take effect until you do).
 
-**Where to change it:**
-1. Go to your project on vercel.com.
-2. Click **Settings**.
-3. Click **Environment Variables** in the left-hand list.
-4. Find `PLAN_TIER` (or add it, if it isn't there yet) and set its value
-   to `free` or `pro`.
-5. Save it.
+**What it changes:** on `free`, each wake-up does **one** round of work
+per department (one chapter, one quality check, etc.). On `pro`, it does
+**up to eight** rounds back-to-back per wake-up, so books move through
+the pipeline roughly eight times faster, chapter for chapter — and now
+that the account is actually on Vercel Pro, that setting is worth turning
+on: go set `PLAN_TIER=pro` the same way described above if you haven't
+already, since the code change here only handles the deploy-level side
+(cron frequency, function duration), not this application-level one.
 
-**Then redeploy — this part is required, the setting won't take effect
-until you do:**
-1. Click **Deployments** at the top of the page.
-2. Click the three dots (**⋯**) next to the most recent deployment.
-3. Click **Redeploy**.
-4. Wait for it to finish (usually a couple of minutes) — after that, the
-   new setting is live.
-
-**What actually changes between `free` and `pro`:**
-
-- **Chapters per run:** Every so often, InkFrame's background system
-  wakes up and does a round of work — writing the next chapter, checking
-  quality, updating the cover/description/etc. On `free`, it does **one**
-  round of that work each time it wakes up. On `pro`, it does **up to
-  eight** rounds back-to-back each time it wakes up — so books move
-  through the pipeline roughly eight times faster, chapter for chapter.
-
-- **How often it wakes up:** This is the one part `PLAN_TIER` does **not**
-  change — it's controlled entirely by the `schedule` string in
-  `vercel.json`, which Vercel evaluates against the account's real plan.
-  On Vercel's free Hobby plan (what this project is on right now) this
-  can be at most once a day, and that's a hard limit — a shorter
-  schedule doesn't just get "slowed down" to once a day, it makes Vercel
-  reject the deployment outright, silently, with no error visible unless
-  you go looking at the Deployments list yourself. If you upgrade the
-  actual Vercel account to Pro later, making InkFrame check in more
-  often needs one small edit to that `schedule` string in `vercel.json`
-  — a genuine code change, the one thing on this list that isn't just a
-  dashboard setting. Ask when you're ready to upgrade and I'll make that
-  edit.
-
-  Right now, on Hobby, if you want it checking in more often than once a
-  day without touching Vercel's plan at all: a free third-party
-  scheduling website (e.g. cron-job.org) can "ping"
-  `POST/GET https://<your-domain>/api/cron/all` with header
-  `Authorization: Bearer <CRON_SECRET>` as often as you like, configured
-  entirely in that website's own dashboard, zero code changes. Ask if you
-  want help setting that up.
-
-**Tested and confirmed working both ways** before this was written —
-`free` runs exactly 1 round per wake-up, `pro` runs up to 8 (and
-sensibly stops early once there's nothing left to do, or if it's running
-low on time for that turn). Run `npm run test:plan-tier` any time to
-re-check this yourself — it doesn't need your Vercel site or database to
-be running, it checks the on/off logic directly.
+**Tested and confirmed working both ways** — `free` runs exactly 1 round
+per wake-up, `pro` runs up to 8 (and sensibly stops early once there's
+nothing left to do, or if it's running low on time for that turn). Run
+`npm run test:plan-tier` any time to re-check this yourself — it doesn't
+need your Vercel site or database to be running, it checks the on/off
+logic directly.
 
 ## Admin approval for new sign-ups
 

@@ -62,7 +62,7 @@ export default function BooksPage() {
     if (["READY_FOR_REVIEW", "USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(status)) {
       router.push(`/publish?project=${id}`);
     } else if (status === "IDEA" || status === "BLUEPRINT" || status === "AWAITING_APPROVAL") {
-      router.push("/wizard");
+      router.push(`/wizard?project=${id}`);
     } else {
       router.push(`/job-progress?project=${id}`);
     }

@@ -708,7 +708,16 @@ export default function DashboardPage() {
                       <div className="agent-bar">
                         <div className="agent-bar-fill" style={{ width: `${pctFor(active)}%` }}></div>
                       </div>
-                      <button className="open-btn" onClick={() => router.push("/job-progress")}>
+                      <button
+                        className="open-btn"
+                        onClick={() =>
+                          router.push(
+                            ["IDEA", "BLUEPRINT", "AWAITING_APPROVAL"].includes(active.status)
+                              ? `/wizard?project=${active.id}`
+                              : `/job-progress?project=${active.id}`
+                          )
+                        }
+                      >
                         Open Writing Agent <span>›</span>
                       </button>
                     </>

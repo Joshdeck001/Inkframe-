@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title as pageTitle } from "@/content/wizard";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
@@ -53,11 +53,15 @@ function Pill({
   );
 }
 
-export default function WizardPage() {
+function WizardBody() {
   const router = useRouter();
   const supabase = createClient();
+  const searchParams = useSearchParams();
+  const resumeProjectId = searchParams.get("project");
 
   const [currentStep, setCurrentStep] = useState(1);
+  const [resuming, setResuming] = useState(!!resumeProjectId);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   const [bookType, setBookType] = useState("");
 
@@ -118,6 +122,152 @@ export default function WizardPage() {
   useEffect(() => {
     document.title = pageTitle;
   }, []);
+
+  // Resuming an in-progress book (from My Books' "Continue Setup") instead
+  // of starting a blank wizard and losing everything already entered.
+  // Loads every field the wizard itself would have saved, then jumps
+  // straight to wherever that project actually left off: step 9 with its
+  // existing draft blueprint loaded if one was already generated, or step 8
+  // (re-running research only if it was never done) if it wasn't.
+  useEffect(() => {
+    if (!resumeProjectId) return;
+    let cancelled = false;
+    (async () => {
+      const [
+        { data: project },
+        { data: identity },
+        { data: audience },
+        { data: scope },
+        { data: style },
+        { data: platform },
+        { data: images },
+        { data: riskChecks },
+        { data: notes },
+        { data: blueprints },
+      ] = await Promise.all([
+        supabase.from("projects").select("*").eq("id", resumeProjectId).single(),
+        supabase.from("project_identity").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase.from("project_audience").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase.from("project_scope").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase.from("project_style").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase.from("project_platform").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase.from("project_images").select("*").eq("project_id", resumeProjectId).maybeSingle(),
+        supabase
+          .from("title_risk_checks")
+          .select("*")
+          .eq("project_id", resumeProjectId)
+          .order("checked_at", { ascending: false })
+          .limit(1),
+        supabase
+          .from("research_notes")
+          .select("*")
+          .eq("project_id", resumeProjectId)
+          .eq("research_type", "genre")
+          .order("created_at", { ascending: false })
+          .limit(1),
+        supabase
+          .from("book_blueprint")
+          .select("*")
+          .eq("project_id", resumeProjectId)
+          .order("version", { ascending: false })
+          .limit(1),
+      ]);
+      if (cancelled) return;
+
+      if (!project) {
+        setResumeError("Couldn't find that book — it may have been deleted.");
+        setResuming(false);
+        return;
+      }
+
+      // Already past the wizard's part of the job — nothing left here to
+      // resume, so send it to where its real progress actually lives.
+      if (!["IDEA", "BLUEPRINT", "AWAITING_APPROVAL"].includes(project.status)) {
+        router.replace(`/job-progress?project=${resumeProjectId}`);
+        return;
+      }
+
+      setProjectId(resumeProjectId);
+      setBookType(project.book_type || "");
+
+      if (identity) {
+        setWorkingTitle(identity.working_title || "");
+        setSubtitle(identity.subtitle || "");
+        setAuthorName(identity.author_name || "");
+        setPenName(identity.pen_name || "");
+        setSeriesName(identity.series_name || "");
+        setLanguage(identity.language || "English");
+        setTargetMarketplace(identity.target_marketplace || "");
+        setInitialIdea(identity.initial_idea || "");
+      }
+      if (audience) {
+        setTargetAudience(audience.target_audience || "");
+        setReaderLevel(audience.reader_level || "");
+        setPrimaryReaderProblem(audience.primary_reader_problem || "");
+        setCorePromise(audience.core_promise || "");
+        setPurpose(audience.purpose || "");
+      }
+      if (scope) {
+        setTargetWordCount(scope.target_word_count || 60000);
+        setEstimatedChapterCount(scope.estimated_chapter_count || 12);
+        setDesiredDepth(scope.desired_depth || "");
+        setTrimSize(scope.trim_size || "6x9");
+      }
+      if (style) {
+        setTone(style.tone || "");
+        setPov(style.pov || "");
+        setPacing(style.pacing || "");
+        setAdditionalInstructions(style.additional_instructions || "");
+      }
+      if (platform) {
+        setPlatformTarget(platform.platform_target || "");
+        setSubmissionGoal(platform.submission_goal || "");
+      }
+      if (images) {
+        setImageWorkflow(images.image_workflow || "");
+        setAutoPlacement(images.auto_placement_enabled ? "Yes" : "No");
+      }
+
+      const risk = riskChecks?.[0];
+      if (risk) {
+        setTitleRiskStatus(risk.status);
+        setTitleRiskNotes(risk.notes);
+      }
+      const note = notes?.[0];
+      if (note?.content) {
+        const marker = "\n\nDifferentiation ideas:\n- ";
+        const markerIndex = note.content.indexOf(marker);
+        if (markerIndex === -1) {
+          setCategorySummary(note.content);
+        } else {
+          setCategorySummary(note.content.slice(0, markerIndex));
+          setDifferentiationIdeas(note.content.slice(markerIndex + marker.length).split("\n- "));
+        }
+      }
+
+      const bp = blueprints?.[0];
+      if (bp && bp.approval_status !== "approved") {
+        setBlueprint(bp.structure);
+        setBlueprintId(bp.id);
+        setBlueprintVersion(bp.version);
+        setBlueprintApproved(false);
+        setCurrentStep(9);
+      } else {
+        setCurrentStep(8);
+        if (!risk) {
+          await generateResearch(resumeProjectId);
+        }
+      }
+
+      setResuming(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately only re-runs if the project id in the URL itself changes
+    // — generateResearch/router/supabase are stable for the component's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeProjectId]);
 
   async function saveProjectRecord(): Promise<string> {
     if (projectId) return projectId;
@@ -293,10 +443,14 @@ export default function WizardPage() {
     setSaveError(null);
     try {
       const pid = await saveProjectRecord();
+      // Move to step 8 first, *then* kick off research — its own "Checking
+      // your title…" box (rendered on step 8) is the loading feedback, so
+      // the screen visibly advances instead of sitting on step 7 with only
+      // a static "Saving…" button label for however long the AI call takes.
+      setCurrentStep(8);
       if (!titleRiskStatus) {
         await generateResearch(pid);
       }
-      setCurrentStep(8);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Could not save this project.");
     }
@@ -306,10 +460,14 @@ export default function WizardPage() {
     setSaveError(null);
     try {
       const pid = projectId ?? (await saveProjectRecord());
+      // Same reasoning as goStep8: advance to step 9 before awaiting
+      // generateBlueprint() so its "Generating your blueprint…" box shows
+      // immediately — a large book's blueprint can genuinely take a minute
+      // or two, and without this the button just looked frozen on step 8.
+      setCurrentStep(9);
       if (!blueprint) {
         await generateBlueprint(pid);
       }
-      setCurrentStep(9);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Could not save this project.");
     }
@@ -340,6 +498,14 @@ export default function WizardPage() {
   }
 
   async function handleClose() {
+    // Resuming an already-started book (My Books' "Continue Setup") has real
+    // data worth keeping even if it's left unfinished again — closing just
+    // steps away, it never deletes. Only a brand-new session with nothing
+    // saved yet worth keeping gets the discard-on-close behavior below.
+    if (resumeProjectId) {
+      router.push("/dashboard");
+      return;
+    }
     if (!confirm("Discard this new book and exit?")) return;
     if (projectId) {
       await supabase.from("projects").delete().eq("id", projectId);
@@ -351,9 +517,35 @@ export default function WizardPage() {
   const isLastStep = currentStep === TOTAL_STEPS;
   const nextDisabled =
     (currentStep === 9 && (blueprintLoading || !blueprint || !blueprintApproved)) ||
-    (currentStep === 7 && researchLoading) ||
-    (currentStep === 8 && blueprintLoading) ||
+    (currentStep === 8 && researchLoading) ||
     saving;
+
+  if (resumeError) {
+    return (
+      <>
+        <style dangerouslySetInnerHTML={{ __html: css }} />
+        <div className="wrap" style={{ textAlign: "center", padding: "80px 20px" }}>
+          <div className="step-title">Couldn&apos;t load this book</div>
+          <p className="step-sub">{resumeError}</p>
+          <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => router.push("/books")}>
+            ← Back to My Books
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  if (resuming) {
+    return (
+      <>
+        <style dangerouslySetInnerHTML={{ __html: css }} />
+        <div className="wrap" style={{ textAlign: "center", padding: "80px 20px" }}>
+          <div className="step-title">Loading your book…</div>
+          <div className="step-sub">Picking up right where you left off.</div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -777,7 +969,8 @@ export default function WizardPage() {
 
             {researchLoading && (
               <div className="blueprint-box" style={{ textAlign: "center", padding: "30px 20px" }}>
-                Checking your title and researching the category…
+                Checking your title and researching the category… this can take up to a minute — stay on this
+                tab.
               </div>
             )}
 
@@ -834,7 +1027,8 @@ export default function WizardPage() {
 
             {blueprintLoading && (
               <div className="blueprint-box" style={{ textAlign: "center", padding: "36px 20px" }}>
-                Generating your blueprint…
+                Generating your blueprint… for a large book this can take a minute or two — stay on this tab,
+                it&apos;s still working.
               </div>
             )}
 
@@ -975,7 +1169,7 @@ export default function WizardPage() {
           ← Back
         </button>
         <button className="btn btn-next" onClick={handleNext} disabled={nextDisabled}>
-          {saving || (currentStep === 7 && researchLoading) || (currentStep === 8 && blueprintLoading)
+          {saving || (currentStep === 8 && researchLoading)
             ? "Saving…"
             : isLastStep
             ? "＋ Start Writing"
@@ -983,5 +1177,13 @@ export default function WizardPage() {
         </button>
       </div>
     </>
+  );
+}
+
+export default function WizardPage() {
+  return (
+    <Suspense fallback={null}>
+      <WizardBody />
+    </Suspense>
   );
 }

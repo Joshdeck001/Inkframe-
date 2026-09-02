@@ -72,6 +72,10 @@
      message doesn't keep reappearing on the dashboard). Admins get full
      access; everyone else gets read-only access to messages actually
      addressed to them.
+   - `supabase/migrations/0013_book_formatting.sql` — adds
+     `project_scope.trim_size` (the wizard's new "Trim Size" question —
+     `5x8`/`5.5x8.5`/`6x9`/`8.5x11`, defaulting to `6x9`), so the exported
+     manuscript's page size is a real user choice instead of hardcoded.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

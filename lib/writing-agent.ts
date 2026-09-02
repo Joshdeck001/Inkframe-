@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 import { getPausedProjectIds } from "@/lib/production-paused";
 import { generateText, modelUsedLabel } from "@/lib/ai-client";
+import { isStructuredBookType } from "@/lib/book-format";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -102,12 +103,23 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     .filter(Boolean)
     .join("\n");
 
+  const structured = isStructuredBookType(project.book_type);
+
   const generated = await generateText({
-    system:
-      "You are InkFrame's Writing Agent. Write the full prose of ONE chapter given its objective and " +
-      "target length, in the specified tone/POV/pacing, continuing naturally from the previous chapter's " +
-      "ending when one is given. Output ONLY the chapter's prose — no chapter-number heading, no title " +
-      "restatement, no meta-commentary.",
+    system: structured
+      ? "You are InkFrame's Writing Agent, writing ONE chapter of a structured non-fiction guide/workbook " +
+        "given its objective and target length, in the specified tone/pacing, continuing naturally from the " +
+        "previous chapter's ending when one is given. Use lightweight Markdown structure where it genuinely " +
+        "helps the reader — '## ' for a subheading, '- ' for a bullet list, '1. ' for a numbered list/steps, " +
+        "and triple-backtick fenced code blocks for any code, commands, or exact syntax. Don't overuse " +
+        "structure: most of the chapter should still be plain prose paragraphs, with headings/lists/code " +
+        "blocks used only where they add real clarity (a step-by-step process, a checklist, a code sample). " +
+        "Output ONLY the chapter's content — no chapter-number heading, no title restatement, no " +
+        "meta-commentary."
+      : "You are InkFrame's Writing Agent. Write the full prose of ONE chapter given its objective and " +
+        "target length, in the specified tone/POV/pacing, continuing naturally from the previous chapter's " +
+        "ending when one is given. Output ONLY the chapter's prose — no chapter-number heading, no title " +
+        "restatement, no meta-commentary.",
     userContent: facts,
     maxTokens: 8000,
   });

@@ -14,6 +14,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQualityGate } from "@/lib/quality-gate";
 import { getPausedProjectIds } from "@/lib/production-paused";
+import { isStructuredBookType, trimSizeInches } from "@/lib/book-format";
 
 type DocxImageType = "jpg" | "png" | "gif" | "bmp";
 
@@ -59,14 +60,132 @@ function numberToWords(n: number): string {
 
 const BODY_FONT = "Times New Roman";
 const FIRST_LINE_INDENT = convertInchesToTwip(0.5);
+const LIST_INDENT = convertInchesToTwip(0.25);
+
+/**
+ * Renders the Writing Agent's lightweight-Markdown output (structured
+ * book types only — see lib/book-format.ts) into real docx elements:
+ * '## '/'### ' headings, '- '/numbered lists with a hanging indent, and
+ * fenced ``` code blocks in a monospace font with light shading. Plain
+ * text is left-aligned, block-style (no first-line indent, spacing
+ * between paragraphs) — the standard non-fiction/guide convention, as
+ * opposed to fiction's justified+indented prose (renderProseContent
+ * below). Unrecognized syntax is just treated as plain text, never
+ * dropped.
+ */
+function renderStructuredContent(content: string): Paragraph[] {
+  const paragraphs: Paragraph[] = [];
+  let textBuffer: string[] = [];
+  let codeBuffer: string[] | null = null;
+
+  const flushText = () => {
+    const text = textBuffer.join(" ").trim();
+    if (text) {
+      paragraphs.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 200 }, children: [new TextRun(text)] }));
+    }
+    textBuffer = [];
+  };
+
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trimEnd();
+
+    if (line.trim().startsWith("```")) {
+      if (codeBuffer === null) {
+        flushText();
+        codeBuffer = [];
+      } else {
+        codeBuffer.forEach((codeLine, i) => {
+          paragraphs.push(
+            new Paragraph({
+              shading: { fill: "F2F2F2" },
+              spacing: { after: i === codeBuffer!.length - 1 ? 200 : 0 },
+              children: [new TextRun({ text: codeLine || " ", font: "Courier New", size: 20 })],
+            })
+          );
+        });
+        codeBuffer = null;
+      }
+      continue;
+    }
+    if (codeBuffer !== null) {
+      codeBuffer.push(line);
+      continue;
+    }
+
+    const heading3 = line.match(/^###\s+(.*)/);
+    const heading2 = !heading3 && line.match(/^##\s+(.*)/);
+    const bullet = line.match(/^[-*]\s+(.*)/);
+    const numbered = line.match(/^(\d+)[.)]\s+(.*)/);
+
+    if (heading2 || heading3) {
+      flushText();
+      const [, text] = (heading2 || heading3) as RegExpMatchArray;
+      paragraphs.push(
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing: { before: 320, after: 160 },
+          children: [new TextRun({ text, bold: true, size: heading2 ? 26 : 24 })],
+        })
+      );
+    } else if (bullet) {
+      flushText();
+      paragraphs.push(
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          indent: { left: LIST_INDENT, hanging: LIST_INDENT },
+          spacing: { after: 120 },
+          children: [new TextRun(`•  ${bullet[1]}`)],
+        })
+      );
+    } else if (numbered) {
+      flushText();
+      paragraphs.push(
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          indent: { left: LIST_INDENT, hanging: LIST_INDENT },
+          spacing: { after: 120 },
+          children: [new TextRun(`${numbered[1]}.  ${numbered[2]}`)],
+        })
+      );
+    } else if (line.trim().length === 0) {
+      flushText();
+    } else {
+      textBuffer.push(line.trim());
+    }
+  }
+  flushText();
+  return paragraphs;
+}
+
+function renderProseContent(content: string): Paragraph[] {
+  return content
+    .split(/\n{2,}/)
+    .filter((p) => p.trim().length > 0)
+    .map(
+      (p, i) =>
+        new Paragraph({
+          children: [new TextRun(p.trim())],
+          alignment: AlignmentType.JUSTIFIED,
+          indent: i === 0 ? undefined : { firstLine: FIRST_LINE_INDENT },
+        })
+    );
+}
 
 /**
  * Assembles the approved manuscript into a real, professionally formatted
- * DOCX (6x9in trim — a standard KDP paperback size — serif body text,
- * justified with first-line indents, centered chapter headings, and page
- * numbers) and stores it in the private `exports` bucket. EPUB/PDF aren't
- * implemented yet — output_formats only ever lists what was actually
- * produced, never a format that doesn't exist as a real file.
+ * DOCX and stores it in the private `exports` bucket. Trim size comes from
+ * the wizard's own choice (project_scope.trim_size, defaulting to 6x9in —
+ * a standard KDP paperback size). Body formatting depends on the book's
+ * type (lib/book-format.ts): fiction/memoir/etc. get justified prose with
+ * first-line indents; guide/workbook/technical types get real headings,
+ * bullet/numbered lists, and code blocks parsed from the Writing Agent's
+ * lightweight Markdown, left-aligned block-style — the same choice, made
+ * once from the project's book_type, applied consistently to every
+ * chapter from the first page to the last. Every page gets a centered
+ * chapter heading (spelled out, "Chapter One") and a page number in the
+ * footer. EPUB/PDF aren't implemented yet — output_formats only ever
+ * lists what was actually produced, never a format that doesn't exist as
+ * a real file.
  */
 export async function runFormattingDepartmentTick(supabase: SupabaseClient): Promise<{
   processed: boolean;
@@ -74,7 +193,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
 }> {
   const pausedProjectIds = await getPausedProjectIds(supabase);
 
-  let projectQuery = supabase.from("projects").select("id, user_id").eq("status", "FORMATTING");
+  let projectQuery = supabase.from("projects").select("id, user_id, book_type").eq("status", "FORMATTING");
   if (pausedProjectIds.length > 0) {
     projectQuery = projectQuery.not("id", "in", `(${pausedProjectIds.join(",")})`);
   }
@@ -86,8 +205,9 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
   if (projectQueryError) throw new Error(`Could not query projects: ${projectQueryError.message}`);
   if (!project) return { processed: false, detail: "No projects awaiting formatting." };
 
-  const [{ data: identity }, { data: chapters }, { data: cover }, { data: placements }] = await Promise.all([
+  const [{ data: identity }, { data: scope }, { data: chapters }, { data: cover }, { data: placements }] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
+    supabase.from("project_scope").select("trim_size").eq("project_id", project.id).maybeSingle(),
     supabase
       .from("chapters")
       .select("id, chapter_number, title, content")
@@ -96,6 +216,9 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", project.id).maybeSingle(),
     supabase.from("image_placements").select("chapter_id, file_ref").eq("project_id", project.id).eq("status", "generated"),
   ]);
+
+  const structured = isStructuredBookType(project.book_type);
+  const { widthIn, heightIn } = trimSizeInches(scope?.trim_size);
 
   const coverConcepts = (cover?.concepts as { image_ref: string | null; status: string }[] | undefined) ?? [];
   const coverImageUrl = cover?.final_cover_ref || coverConcepts.find((c) => c.status === "generated" && c.image_ref)?.image_ref || null;
@@ -144,17 +267,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     const chapterCount = (chapters ?? []).length;
     const chapterParagraphs = (chapters ?? []).flatMap((chapter, chapterIndex) => {
       const image = interiorImages.get(chapter.id);
-      const bodyParagraphs = chapter.content
-        .split(/\n{2,}/)
-        .filter((p: string) => p.trim().length > 0)
-        .map(
-          (p: string, i: number) =>
-            new Paragraph({
-              children: [new TextRun(p.trim())],
-              alignment: AlignmentType.JUSTIFIED,
-              indent: i === 0 ? undefined : { firstLine: FIRST_LINE_INDENT },
-            })
-        );
+      const bodyParagraphs = structured ? renderStructuredContent(chapter.content) : renderProseContent(chapter.content);
 
       return [
         new Paragraph({
@@ -195,7 +308,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
         {
           properties: {
             page: {
-              size: { width: convertInchesToTwip(6), height: convertInchesToTwip(9) },
+              size: { width: convertInchesToTwip(widthIn), height: convertInchesToTwip(heightIn) },
               margin: {
                 top: convertInchesToTwip(0.75),
                 bottom: convertInchesToTwip(0.75),

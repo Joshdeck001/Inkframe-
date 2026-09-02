@@ -132,17 +132,43 @@ All in `.env.local` (gitignored, never committed) — see
      text. With no real artwork generated yet (no billing enabled), the
      manuscript exports exactly as it always did: text only, no broken
      image placeholders. **Real book typography, not a default Word
-     document** — 6×9in trim (a standard KDP paperback size), 0.75in
-     margins, Times New Roman body text justified with 0.5in first-line
-     indents (no indent on a chapter's opening paragraph, the standard
-     typographic convention), a centered "Chapter One"/"Chapter Two"/…
-     heading (spelled out, not a bare numeral) with the chapter's own
-     title beneath it in italics, and a centered page number in the
-     footer of every page. Verified directly against the generated
-     `.docx`'s internal XML (page size, margins, justification, indent
-     values, the footer's page-number field, and the embedded font all
-     confirmed present and correct) rather than just assumed from the
-     `docx` library's API.
+     document** — 0.75in margins, Times New Roman body text, a centered
+     "Chapter One"/"Chapter Two"/… heading (spelled out, not a bare
+     numeral) with the chapter's own title beneath it in italics, and a
+     centered page number in the footer of every page. Verified directly
+     against the generated `.docx`'s internal XML (page size, margins,
+     justification, indent values, the footer's page-number field, and
+     the embedded font all confirmed present and correct) rather than
+     just assumed from the `docx` library's API.
+     - **Trim size is a real wizard question now** (Step 4, "How long
+       should this book be?"), not hardcoded — 5×8in, 5.5×8.5in, 6×9in
+       (the default — a standard KDP paperback size), or 8.5×11in for a
+       guide/workbook. Stored in `project_scope.trim_size`
+       (`0013_book_formatting.sql`) and read by the Formatting Department
+       at export time.
+     - **Body formatting depends on the book's type**
+       (`lib/book-format.ts`), decided once per project and applied
+       identically to every chapter from first page to last — never
+       switching styles partway through a book. Fiction/Memoir/
+       Biography/Children's/Serial Fiction/Other get justified prose with
+       0.5in first-line indents (no indent on a chapter's opening
+       paragraph, the standard typographic convention) — unchanged from
+       before. **Nonfiction/Self-help/Educational/Technical-Professional
+       get real structure**: the Writing Agent (`lib/writing-agent.ts`)
+       is told to use lightweight Markdown — `## `/`### ` for
+       subheadings, `- ` for bullet lists, `1. ` for numbered
+       steps/lists, and triple-backtick fenced code blocks for any code
+       or exact commands — only where it genuinely helps (most of the
+       chapter is still plain prose), and the Formatting Department
+       parses that into real bold headings, hanging-indent bulleted/
+       numbered lists, and monospace shaded code blocks, left-aligned
+       block-style (no first-line indent) rather than fiction's
+       justified+indented convention. Built for the product guides, user
+       guides, and workbooks this is meant to produce next, not just
+       novels — verified by generating a sample chapter's worth of
+       headings/bullets/numbered-steps/code and confirming each element
+       (bold text, bullet/number prefix, shaded monospace lines) landed
+       correctly in the generated `.docx`'s XML, in the right order.
 
    Once formatting finishes, status reaches `READY_FOR_REVIEW` and
    `job-progress` shows the real metadata, cover concept prompts, and

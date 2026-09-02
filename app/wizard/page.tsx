@@ -79,6 +79,7 @@ export default function WizardPage() {
   const [targetWordCount, setTargetWordCount] = useState(60000);
   const [estimatedChapterCount, setEstimatedChapterCount] = useState(12);
   const [desiredDepth, setDesiredDepth] = useState("");
+  const [trimSize, setTrimSize] = useState("6x9");
 
   const [tone, setTone] = useState("");
   const [pov, setPov] = useState("");
@@ -163,6 +164,7 @@ export default function WizardPage() {
           target_word_count: targetWordCount || null,
           estimated_chapter_count: estimatedChapterCount || null,
           desired_depth: desiredDepth || null,
+          trim_size: trimSize || null,
         }),
         supabase.from("project_style").insert({
           project_id: pid,
@@ -560,6 +562,19 @@ export default function WizardPage() {
               {["Accessible", "Standard", "Detailed", "Expert"].map((v) => (
                 <Pill key={v} selected={desiredDepth === v} onClick={() => setDesiredDepth(v)}>
                   {v}
+                </Pill>
+              ))}
+            </div>
+            <label style={{ marginTop: "16px", display: "block" }}>Trim Size (the exported manuscript&apos;s page size)</label>
+            <div className="pill-row">
+              {[
+                { v: "6x9", l: "6 x 9 in — Novel / Standard" },
+                { v: "5.5x8.5", l: "5.5 x 8.5 in — Compact" },
+                { v: "5x8", l: "5 x 8 in — Pocket" },
+                { v: "8.5x11", l: "8.5 x 11 in — Guide / Workbook" },
+              ].map(({ v, l }) => (
+                <Pill key={v} selected={trimSize === v} onClick={() => setTrimSize(v)}>
+                  {l}
                 </Pill>
               ))}
             </div>

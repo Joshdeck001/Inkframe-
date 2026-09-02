@@ -116,6 +116,7 @@ function JobProgressBody() {
   const [loading, setLoading] = useState(!!projectId);
   const [metadata, setMetadata] = useState<MetadataData | null>(null);
   const [coverConcepts, setCoverConcepts] = useState<CoverConcept[]>([]);
+  const [finalCoverRef, setFinalCoverRef] = useState<string | null>(null);
   const [complianceChecks, setComplianceChecks] = useState<ComplianceCheck[]>([]);
   const [researchNotes, setResearchNotes] = useState<ResearchNote[]>([]);
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
@@ -148,7 +149,7 @@ function JobProgressBody() {
           .select("description_long, description_short, keywords, categories")
           .eq("project_id", projectId)
           .maybeSingle(),
-        supabase.from("cover_department").select("concepts").eq("project_id", projectId).maybeSingle(),
+        supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", projectId).maybeSingle(),
         supabase
           .from("compliance_checks")
           .select("check_type, status, detail")
@@ -165,7 +166,13 @@ function JobProgressBody() {
         setProject(nextProject);
         setChapterCount(count ?? 0);
         setMetadata(meta ?? null);
-        setCoverConcepts((cover?.concepts as CoverConcept[] | undefined) ?? []);
+        const nextConcepts = (cover?.concepts as CoverConcept[] | undefined) ?? [];
+        setCoverConcepts(nextConcepts);
+        setFinalCoverRef(
+          (cover?.final_cover_ref as string | null | undefined) ??
+            nextConcepts.find((c) => c.status === "generated" && c.image_ref)?.image_ref ??
+            null
+        );
         setComplianceChecks((compliance as ComplianceCheck[] | undefined) ?? []);
         setResearchNotes((research as ResearchNote[] | undefined) ?? []);
         setLoading(false);
@@ -335,9 +342,13 @@ function JobProgressBody() {
         {projectId && !loading && project && (
           <div className="main-card">
             <div className="book-row">
-              <div className="cover-mini" id="job-cover">
-                IF
-              </div>
+              {finalCoverRef ? (
+                <img className="cover-mini" id="job-cover" src={finalCoverRef} alt="" style={{ objectFit: "cover" }} />
+              ) : (
+                <div className="cover-mini" id="job-cover">
+                  IF
+                </div>
+              )}
               <div>
                 <div className="book-title" id="job-title">
                   {project.project_identity?.working_title || "Untitled Project"}

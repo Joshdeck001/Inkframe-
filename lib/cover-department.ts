@@ -130,8 +130,14 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
 
   const concept = concepts[nextIndex];
   try {
-    const image = await generateImage({ prompt: concept.prompt });
-    const path = `${project.id}/concept-${nextIndex + 1}.png`;
+    // JPEG for the ebook cover — the format Amazon KDP and other ebook
+    // platforms actually expect for a cover upload, not the PNG every other
+    // generated image on this app uses. A print/paperback wraparound cover
+    // (spine width from page count, bleed, a single composited PDF) is a
+    // separate, much larger feature this doesn't attempt yet.
+    const image = await generateImage({ prompt: concept.prompt, format: "jpeg" });
+    const ext = image.mimeType === "image/jpeg" ? "jpg" : "png";
+    const path = `${project.id}/concept-${nextIndex + 1}.${ext}`;
     const { error: uploadError } = await supabase.storage
       .from("covers")
       .upload(path, image.buffer, { contentType: image.mimeType, upsert: true });

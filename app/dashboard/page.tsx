@@ -14,7 +14,19 @@ type ProjectRow = {
   updated_at: string;
   project_identity: { working_title: string | null; subtitle: string | null } | null;
   project_scope: { words_written: number | null; target_word_count: number | null } | null;
+  cover_department: {
+    final_cover_ref: string | null;
+    concepts: { image_ref: string | null; status: string }[] | null;
+  } | null;
 };
+
+/** The chosen cover if one was picked, else the first real generated concept — same fallback the Formatting Department itself uses when it embeds a cover. */
+function coverThumbUrl(p: ProjectRow): string | null {
+  const cover = p.cover_department;
+  if (!cover) return null;
+  if (cover.final_cover_ref) return cover.final_cover_ref;
+  return cover.concepts?.find((c) => c.status === "generated" && c.image_ref)?.image_ref ?? null;
+}
 
 const STATUS_LABEL: Record<string, string> = {
   IDEA: "Draft",
@@ -135,7 +147,7 @@ export default function DashboardPage() {
       const { data: projectRows } = await supabase
         .from("projects")
         .select(
-          "id, status, updated_at, project_identity(working_title, subtitle), project_scope(words_written, target_word_count)"
+          "id, status, updated_at, project_identity(working_title, subtitle), project_scope(words_written, target_word_count), cover_department(final_cover_ref, concepts)"
         )
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false });
@@ -596,7 +608,17 @@ export default function DashboardPage() {
                       <button className="btn-primary" onClick={createNewBook}>
                         ＋ Create New Book
                       </button>
-                      <div className="link-action">⇧ Import Manuscript</div>
+                      <div
+                      className="link-action"
+                      style={{ cursor: "pointer" }}
+                      onClick={() =>
+                        alert(
+                          "Importing an existing manuscript isn't built yet — start a new book with the wizard instead."
+                        )
+                      }
+                    >
+                      ⇧ Import Manuscript
+                    </div>
                     </div>
                   </div>
                   <div className="hero-art">
@@ -613,21 +635,25 @@ export default function DashboardPage() {
                     <h4>New Book</h4>
                     <span>Start writing</span>
                   </div>
-                  <div className="qa-card">
+                  <div
+                    className="qa-card"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => (active ? openProject(active.id, active.status) : router.push("/books"))}
+                  >
                     <div className="qa-icon" style={{ background: "rgba(120,80,255,.15)", color: "#b7a0ff" }}>
                       ✎
                     </div>
                     <h4>Continue Writing</h4>
                     <span>Pick up where you left off</span>
                   </div>
-                  <div className="qa-card">
+                  <div className="qa-card" style={{ cursor: "pointer" }} onClick={() => router.push("/formatter")}>
                     <div className="qa-icon" style={{ background: "rgba(226,59,76,.15)", color: "var(--redGlow)" }}>
                       ▤
                     </div>
                     <h4>Format Book</h4>
                     <span>Make it publish ready</span>
                   </div>
-                  <div className="qa-card">
+                  <div className="qa-card" style={{ cursor: "pointer" }} onClick={() => router.push("/cover")}>
                     <div className="qa-icon" style={{ background: "rgba(255,150,50,.15)", color: "#ffb066" }}>
                       ◈
                     </div>
@@ -666,7 +692,11 @@ export default function DashboardPage() {
                           style={{ cursor: "pointer" }}
                           onClick={() => openProject(p.id, p.status)}
                         >
-                          <div className="book-thumb">IF</div>
+                          {coverThumbUrl(p) ? (
+                            <img className="book-thumb" src={coverThumbUrl(p)!} alt="" style={{ objectFit: "cover" }} />
+                          ) : (
+                            <div className="book-thumb">IF</div>
+                          )}
                           <div>
                             <div className="project-name">
                               {p.project_identity?.working_title || "Untitled Project"}
@@ -715,7 +745,11 @@ export default function DashboardPage() {
                       </div>
                       <div className="agent-desc">Your book is currently being written by InkFrame AI.</div>
                       <div className="agent-book">
-                        <div className="cover"></div>
+                        {coverThumbUrl(active) ? (
+                          <img className="cover" src={coverThumbUrl(active)!} alt="" style={{ objectFit: "cover" }} />
+                        ) : (
+                          <div className="cover"></div>
+                        )}
                         <div>
                           <div className="title">{active.project_identity?.working_title || "Untitled Project"}</div>
                           <div className="sub">{active.project_identity?.subtitle || ""}</div>

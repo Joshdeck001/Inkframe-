@@ -39,16 +39,21 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-async function openaiImage(prompt: string, size: string, timeoutMs: number): Promise<ImageResult> {
+async function openaiImage(prompt: string, size: string, timeoutMs: number, format: "png" | "jpeg"): Promise<ImageResult> {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: timeoutMs });
   const response = await withTimeout(
-    openai.images.generate({ model: OPENAI_IMAGE_MODEL, prompt, size: size as never, n: 1 }),
+    openai.images.generate({ model: OPENAI_IMAGE_MODEL, prompt, size: size as never, n: 1, output_format: format }),
     timeoutMs,
     "OpenAI"
   );
   const b64 = "data" in response ? response.data?.[0]?.b64_json : undefined;
   if (!b64) throw new Error("OpenAI did not return image data.");
-  return { buffer: Buffer.from(b64, "base64"), mimeType: "image/png", provider: "openai", model: OPENAI_IMAGE_MODEL };
+  return {
+    buffer: Buffer.from(b64, "base64"),
+    mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
+    provider: "openai",
+    model: OPENAI_IMAGE_MODEL,
+  };
 }
 
 async function geminiImage(prompt: string, timeoutMs: number): Promise<ImageResult> {
@@ -76,8 +81,14 @@ async function geminiImage(prompt: string, timeoutMs: number): Promise<ImageResu
   };
 }
 
-export async function generateImage(opts: { prompt: string; size?: string }): Promise<ImageResult> {
+export async function generateImage(opts: { prompt: string; size?: string; format?: "png" | "jpeg" }): Promise<ImageResult> {
   const size = opts.size ?? "1024x1024";
+  // Only OpenAI's gpt-image-1 supports choosing the output format; Gemini's
+  // image-output mode always returns whatever format it returns (PNG in
+  // practice) with no equivalent parameter, so a jpeg request only actually
+  // takes effect when OpenAI serves it — the real mimeType returned always
+  // reflects what was actually generated, never a guess.
+  const format = opts.format ?? "png";
   const errors: string[] = [];
   const deadline = Date.now() + OVERALL_BUDGET_MS;
 
@@ -85,7 +96,7 @@ export async function generateImage(opts: { prompt: string; size?: string }): Pr
     const timeLeft = deadline - Date.now();
     if (timeLeft >= MIN_ATTEMPT_MS) {
       try {
-        return await openaiImage(opts.prompt, size, timeLeft);
+        return await openaiImage(opts.prompt, size, timeLeft, format);
       } catch (e) {
         errors.push(`openai: ${errorMessage(e)}`);
       }

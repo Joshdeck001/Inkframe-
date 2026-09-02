@@ -7,7 +7,7 @@ import { css, title } from "@/content/auth";
 
 export const dynamic = "force-dynamic";
 
-type Mode = "signin" | "signup";
+type Mode = "signin" | "signup" | "forgot";
 
 function passwordIssues(pw: string): string[] {
   const issues: string[] = [];
@@ -39,6 +39,11 @@ function AuthForm() {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = title;
@@ -94,6 +99,21 @@ function AuthForm() {
     }
   }
 
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotError(null);
+    setForgotLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/auth/reset-password`,
+    });
+    setForgotLoading(false);
+    if (error) {
+      setForgotError(error.message);
+      return;
+    }
+    setForgotSent(true);
+  }
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: css }} />
@@ -137,7 +157,18 @@ function AuthForm() {
               <div className="remember">
                 <span className="checkbox">✓</span> Remember me
               </div>
-              <a className="link" href="#">
+              <a
+                className="link"
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setError(null);
+                  setForgotError(null);
+                  setForgotSent(false);
+                  setForgotEmail(signinEmail);
+                  setMode("forgot");
+                }}
+              >
                 Forgot Password?
               </a>
             </div>
@@ -165,6 +196,57 @@ function AuthForm() {
               }}
             >
               Sign up
+            </a>
+          </div>
+        </div>
+      )}
+
+      {mode === "forgot" && (
+        <div className="card blue-edge active" id="forgot-card">
+          <div className="brand">
+            <img src="/logo-brand.png" alt="InkFrame" />
+          </div>
+          <h1>Reset Your Password</h1>
+          <p className="subtitle">Enter your account email and we&apos;ll send you a link to set a new password.</p>
+
+          {forgotSent ? (
+            <p className="subtitle" style={{ marginTop: "8px" }}>
+              Check <strong>{forgotEmail}</strong> for a password reset link.
+            </p>
+          ) : (
+            <form onSubmit={handleForgotPassword}>
+              <div className="field">
+                <label>Email Address</label>
+                <span className="ic">✉</span>
+                <input
+                  type="email"
+                  placeholder="Enter your email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  required
+                />
+              </div>
+
+              {forgotError && (
+                <p style={{ color: "var(--red)", fontSize: "12.5px", marginBottom: "14px" }}>{forgotError}</p>
+              )}
+
+              <button className="btn" type="submit" disabled={forgotLoading}>
+                {forgotLoading ? "Sending…" : "Send Reset Link"}
+              </button>
+            </form>
+          )}
+
+          <div className="switch">
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                setForgotError(null);
+                setMode("signin");
+              }}
+            >
+              ← Back to Sign In
             </a>
           </div>
         </div>

@@ -283,15 +283,16 @@ route's `maxDuration` is capped at 60. The individual `/api/cron/<name>`
 routes still exist and work the same way (same `Bearer $CRON_SECRET`
 auth) — call them directly for local testing.
 
-**This project is currently running on Vercel Pro**, so `vercel.json`'s
-schedule for `/api/cron/all` has already been changed from Hobby's
-required `"0 6 * * *"` (once a day) to `"*/5 * * * *"` (every 5 minutes) —
-Pro removes the once-a-day limit, so this is safe. Combined with
-`PLAN_TIER=pro` (up to 8 rounds of work per wake-up instead of 1), that's
-the "very active" background AI the site is configured for now. If this
-project is ever downgraded back to Hobby, that schedule string needs to
-change back to `"0 6 * * *"` (or any once-a-day cron expression) or
-deploys will fail Hobby's cron validation.
+**This project is currently on Vercel's Hobby plan**, so
+`vercel.json`'s schedule for `/api/cron/all` is `"0 6 * * *"` — once a
+day, the most Hobby allows. A schedule shorter than that (e.g. every 5
+minutes, which this project briefly had) makes Vercel silently reject
+every deployment that includes it — the site just keeps serving
+whatever was last built successfully, with no obvious error shown
+anywhere, which is exactly what happened here and cost real time to
+track down. If this project is ever upgraded to Vercel Pro, `PLAN_TIER`
+alone won't make it check in more often (see the next section) — that
+schedule string is the one genuine code change needed, and only then.
 
 ## How to Upgrade to Vercel Pro Later
 
@@ -332,20 +333,24 @@ until you do:**
 - **How often it wakes up:** This is the one part `PLAN_TIER` does **not**
   change — it's controlled entirely by the `schedule` string in
   `vercel.json`, which Vercel evaluates against the account's real plan.
-  On Vercel's free Hobby plan this can be at most once a day; upgrading
-  Vercel itself (not just `PLAN_TIER`) is what actually removes that
-  limit. **This project has already been upgraded and reconfigured**:
-  `vercel.json` now checks in every 5 minutes instead of once a day (see
-  "Deploying on Vercel's free (Hobby) plan" above) — that was the one
-  genuine code change on this list, made once, and doesn't need repeating
-  as `PLAN_TIER` gets flipped between `free` and `pro` going forward.
+  On Vercel's free Hobby plan (what this project is on right now) this
+  can be at most once a day, and that's a hard limit — a shorter
+  schedule doesn't just get "slowed down" to once a day, it makes Vercel
+  reject the deployment outright, silently, with no error visible unless
+  you go looking at the Deployments list yourself. If you upgrade the
+  actual Vercel account to Pro later, making InkFrame check in more
+  often needs one small edit to that `schedule` string in `vercel.json`
+  — a genuine code change, the one thing on this list that isn't just a
+  dashboard setting. Ask when you're ready to upgrade and I'll make that
+  edit.
 
-  If you ever want it checking in even more often than every 5 minutes,
-  that's another small edit to the same `schedule` string — or, on any
-  Vercel plan, a free third-party scheduling website (e.g. cron-job.org)
-  can "ping" `/api/cron/all` as often as you like with zero code changes,
-  configured entirely in that website's own dashboard. Ask if you want
-  help setting that up.
+  Right now, on Hobby, if you want it checking in more often than once a
+  day without touching Vercel's plan at all: a free third-party
+  scheduling website (e.g. cron-job.org) can "ping"
+  `POST/GET https://<your-domain>/api/cron/all` with header
+  `Authorization: Bearer <CRON_SECRET>` as often as you like, configured
+  entirely in that website's own dashboard, zero code changes. Ask if you
+  want help setting that up.
 
 **Tested and confirmed working both ways** before this was written —
 `free` runs exactly 1 round per wake-up, `pro` runs up to 8 (and

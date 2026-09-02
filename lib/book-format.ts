@@ -152,3 +152,18 @@ export function contentWidthTwips(trimSize: string | null | undefined): number {
   const { widthIn } = trimSizeInches(trimSize);
   return convertInchesToTwip(widthIn - PAGE_MARGIN_IN * 2);
 }
+
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+/** "Chapter One", "Chapter Twenty-Three" — spelled out, matching real published-book convention, not a bare numeral. Shared by both the DOCX and EPUB builders so chapter headings read identically in either format. */
+export function numberToWords(n: number): string {
+  if (n <= 0 || n > 999) return String(n);
+  if (n < 20) return ONES[n];
+  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10].toLowerCase()}` : "");
+  const rest = n % 100;
+  return `${ONES[Math.floor(n / 100)]} Hundred${rest ? ` ${numberToWords(rest)}` : ""}`;
+}

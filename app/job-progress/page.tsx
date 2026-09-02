@@ -181,11 +181,11 @@ function JobProgressBody() {
   const pct = targetWords ? Math.min(100, Math.round((words / targetWords) * 100)) : status === "QUEUED" ? 8 : 2;
   const isReady = ["READY_FOR_REVIEW", "USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(status);
 
-  async function handleDownload() {
+  async function handleDownload(format: "docx" | "epub") {
     if (!projectId) return;
     setDownloadState("loading");
     try {
-      const res = await fetch(`/api/export-download?project=${projectId}`);
+      const res = await fetch(`/api/export-download?project=${projectId}&format=${format}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Download failed.");
       window.open(json.url, "_blank");
@@ -399,8 +399,11 @@ function JobProgressBody() {
           </button>
           {isReady ? (
             <>
-              <button className="btn btn-secondary" onClick={handleDownload} disabled={downloadState === "loading"}>
+              <button className="btn btn-secondary" onClick={() => handleDownload("docx")} disabled={downloadState === "loading"}>
                 {downloadState === "loading" ? "Preparing…" : "Download (DOCX)"}
+              </button>
+              <button className="btn btn-secondary" onClick={() => handleDownload("epub")} disabled={downloadState === "loading"}>
+                {downloadState === "loading" ? "Preparing…" : "Download (EPUB)"}
               </button>
               <button className="btn btn-primary" onClick={() => router.push(`/publish?project=${projectId}`)}>
                 Continue to Publish →

@@ -217,7 +217,7 @@ function PublishBody() {
           <>
             <div className="checklist-panel">
               <CheckRow label="Metadata" ok={gate.metadata_check} text={gate.metadata_check ? "✓ Complete" : "Incomplete"} />
-              <CheckRow label="eBook — Manuscript" ok={gate.formatting_check} text={gate.formatting_check ? "✓ Ready (.docx)" : "Not ready"} />
+              <CheckRow label="eBook — Manuscript" ok={gate.formatting_check} text={gate.formatting_check ? "✓ Ready (.docx, .epub)" : "Not ready"} />
               <CheckRow
                 label="eBook — Cover (JPEG)"
                 ok={gate.cover_check ? null : false}

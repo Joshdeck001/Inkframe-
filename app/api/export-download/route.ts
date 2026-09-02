@@ -10,11 +10,14 @@ export const dynamic = "force-dynamic";
  * Returns a short-lived signed URL for a project's exported file. The
  * `exports` bucket is private, so this is the only way to reach it — the
  * caller's session proves they own the project (via RLS on formatting_jobs)
- * before the service-role client is used to sign the URL.
+ * before the service-role client is used to sign the URL. `format=epub`
+ * picks the EPUB output; anything else (including no param) picks the
+ * DOCX, matching the original single-format behavior.
  */
 export const GET = withJsonErrors(async (request: Request) => {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("project");
+  const format = searchParams.get("format") === "epub" ? "epub" : "docx";
   if (!projectId) return NextResponse.json({ error: "project is required" }, { status: 400 });
 
   const supabase = await createClient();
@@ -30,7 +33,7 @@ export const GET = withJsonErrors(async (request: Request) => {
     .limit(1)
     .maybeSingle();
 
-  const path = job?.output_files?.[0];
+  const path = (job?.output_files ?? []).find((f: string) => f.endsWith(`.${format}`));
   if (!path) return NextResponse.json({ error: "No completed export found for this project." }, { status: 404 });
 
   const service = createServiceClient();

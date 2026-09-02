@@ -117,19 +117,24 @@ All in `.env.local` (gitignored, never committed) — see
      guidance for serial platforms — into `compliance_checks`.
    - `/api/cron/formatting-department` assembles every approved chapter
      into a real, professionally formatted `.docx` file (the `docx` npm
-     package) and uploads it to a new private Supabase Storage bucket
-     (`supabase/migrations/0003_storage.sql`). `/api/export-download`
-     hands back a 60-second signed URL after verifying the requester owns
-     the project — there's no direct client read access to the bucket.
-     Only `docx` is produced; EPUB/PDF aren't implemented, and
-     `formatting_jobs.output_formats` only ever lists what was actually
-     generated. See "The Professional Book Formatting Engine" below for
-     what it actually produces.
+     package) **and** a real EPUB 3 file (`lib/epub-builder.ts`, built
+     directly on the ZIP/OPF/XHTML format via `jszip`) from the same
+     content, and uploads both to a private Supabase Storage bucket
+     (`supabase/migrations/0003_storage.sql`). Both formats are driven by
+     the same shared manuscript-block parser (`lib/manuscript-blocks.ts`)
+     and the same Book Design Profile, so a Markdown syntax fix or a new
+     callout type only has to happen once and the two outputs never drift
+     apart. `/api/export-download?project=<id>&format=docx|epub` hands
+     back a 60-second signed URL after verifying the requester owns the
+     project — there's no direct client read access to the bucket. PDF
+     isn't implemented (see "The Professional Book Formatting Engine"
+     below for why), and `formatting_jobs.output_formats` only ever lists
+     what was actually generated.
 
    Once formatting finishes, status reaches `READY_FOR_REVIEW` and
    `job-progress` shows the real metadata, cover concept prompts, and
-   compliance results inline, plus a working "Download Manuscript (DOCX)"
-   button.
+   compliance results inline, plus working "Download (DOCX)" and
+   "Download (EPUB)" buttons (also on the `/formatter` page).
 
 10. **Final Quality Gate** — folded into the Formatting Department's tick
     (it's the last of the Step 9 departments to run, right before
@@ -629,13 +634,75 @@ accurate rather than aspirational: a true interactive visual preview (no
 browser-based layout engine exists in this stack to render one); true
 print recto/verso pagination (Word/OOXML generators don't expose real
 left/right-page-aware layout — the odd/even running-header split above
-is the closest honest approximation); EPUB/PDF output (architecturally
-compatible with this content model, but not built); an automated
-scored quality-control/preflight pass; drop caps; and finer sub-genre
-design families (romance vs. thriller vs. fantasy, etc.) beyond the four
-families the existing `book_type` field actually supports — going
-further would need a real sub-genre classification step this app
+is the closest honest approximation); PDF output (see below for why);
+an automated scored quality-control/preflight pass; drop caps; and finer
+sub-genre design families (romance vs. thriller vs. fantasy, etc.) beyond
+the four families the existing `book_type` field actually supports —
+going further would need a real sub-genre classification step this app
 doesn't have yet, not a fabricated one.
+
+### EPUB 3 export
+
+Every completed manuscript now also gets a real EPUB 3 file
+(`lib/epub-builder.ts`), generated from the *same* parsed content as the
+`.docx` — same Book Design Profile, same chapters and images, same
+`lib/manuscript-blocks.ts` parser — so the two formats can't drift out of
+sync with each other. It's built directly on the real EPUB structure via
+`jszip`, not a converted `.docx`: a `mimetype` entry stored uncompressed
+and first in the archive, `META-INF/container.xml`, an OPF package
+document (`content.opf`) with real Dublin Core metadata and a UUID
+identifier, a real EPUB3 navigation document (`nav.xhtml`, doubling as the
+table of contents), per-chapter XHTML, and family-aware CSS that
+reproduces the same design rules as the `.docx` (e.g. no first-line indent
+on the paragraph after a heading) using plain CSS selectors, since EPUB is
+reflowable and has no page-based layout to replicate.
+
+**How it was verified**: the official W3C **EPUBCheck** validator (tried
+two independent released versions) confirmed the ZIP/OPF structure and
+caught one real bug during development — `styles.css` was written into
+the archive but never declared in the OPF manifest, which every generated
+file exposes as an EPUBCheck error (fixed). EPUBCheck itself, in every
+build available in this environment, then fails the navigation document
+with `HTM_054`/`RSC-005` errors claiming the standard `epub:` namespace
+(`http://www.w3.org/ns/epub` — the one the EPUB 3 spec itself requires)
+is invalid, on a `<nav epub:type="toc">` element that is textbook-correct
+per the spec. That failure reproduced identically across two EPUBCheck
+versions and both whole-file and isolated single-file validation modes,
+including on a minimal hand-written test file with no InkFrame code
+involved — pointing at a defect in this environment's available
+EPUBCheck builds, not in the generated files. To confirm the files are
+actually correct rather than just assume it, they were independently
+re-checked with a completely separate real EPUB parser (Python's
+`ebooklib`), which correctly opened every generated file, read its
+metadata, listed its full manifest, extracted its table of contents from
+`nav.xhtml`, and rendered every chapter's headings, lists, tables,
+callouts, and captioned images exactly as written — plus a direct
+`zipfile` check that `mimetype` is first and stored uncompressed, and an
+XML well-formedness check on every `.xhtml`/`.opf`/`.xml` file in the
+archive. That's the standard this feature was held to before shipping.
+
+Download either format from `job-progress` or `/formatter` via
+`/api/export-download?project=<id>&format=docx|epub`.
+
+### Why PDF isn't built (yet)
+
+Asked directly whether InkFrame should also export PDF, the honest answer
+is: not this pass, on purpose — per "build it if you can do it well, and
+if you can't, leave it." Both realistic ways to generate a real, correctly
+paginated PDF from this content carry risk that couldn't be verified from
+this environment: a headless-browser approach (Puppeteer/Playwright +
+`@sparticuz/chromium` on Vercel serverless) has binary-size/cold-start/
+deployment behavior on real Vercel serverless infrastructure that can't be
+tested from here; a hand-rolled low-level layout approach (`pdf-lib`
+without a browser) has real pagination-correctness risk with no reliable
+way to render and inspect the output — LibreOffice (`soffice`), the one
+tool that could have rendered a PDF for visual verification in this
+sandbox, was confirmed non-functional here even on a trivial one-paragraph
+test file. Rather than ship a PDF exporter nobody could confirm actually
+produces a correctly paginated book, it was left out. It's architecturally
+straightforward to add once there's a way to verify it end-to-end (either
+in a real Vercel environment, or once headless rendering works in this
+sandbox).
 
 ## Dashboard sidebar — every item now goes somewhere
 
@@ -692,7 +759,8 @@ feature that's currently honestly labeled "not built yet" (a case can be
 made it's largely redundant now that the Book Design Profile system
 handles professional formatting automatically per book type/trim size —
 worth a real product conversation before building it, not just building
-it because the label says "not built yet"), EPUB/PDF export, or true
-sub-genre design families (romance vs. thriller, etc.) beyond the four
-the `book_type` field currently supports. See the roadmap in
+it because the label says "not built yet"), PDF export (see "Why PDF
+isn't built (yet)" above), or true sub-genre design families (romance vs.
+thriller, etc.) beyond the four the `book_type` field currently supports.
+See the roadmap in
 `InkFrame_Opening_ClaudeCode_Prompt.md` for anything not covered above.

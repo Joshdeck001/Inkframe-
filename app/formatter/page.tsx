@@ -37,11 +37,11 @@ export default function FormatterPage() {
     };
   }, [effectiveId, supabase]);
 
-  async function handleDownload() {
+  async function handleDownload(format: "docx" | "epub") {
     if (!effectiveId) return;
     setDownloading(true);
     try {
-      const res = await fetch(`/api/export-download?project=${effectiveId}`);
+      const res = await fetch(`/api/export-download?project=${effectiveId}&format=${format}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Download failed.");
       window.open(json.url, "_blank");
@@ -66,7 +66,7 @@ export default function FormatterPage() {
       </header>
       <div className="wrap">
         <h1>▦ Formatter</h1>
-        <p className="subtitle">Manuscript formatting jobs for your books. Only .docx is produced today — EPUB/PDF aren&apos;t implemented yet.</p>
+        <p className="subtitle">Manuscript formatting jobs for your books. Each job produces both DOCX and EPUB — PDF isn&apos;t implemented yet.</p>
 
         <ProjectPicker projects={projects} selectedId={effectiveId} onSelect={setSelectedId} />
 
@@ -83,9 +83,14 @@ export default function FormatterPage() {
               </div>
             ))}
             {jobs?.some((j) => j.status === "complete") && (
-              <button className="btn btn-primary" style={{ marginTop: "14px" }} onClick={handleDownload} disabled={downloading}>
-                {downloading ? "Preparing…" : "Download Manuscript (DOCX)"}
-              </button>
+              <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
+                <button className="btn btn-primary" onClick={() => handleDownload("docx")} disabled={downloading}>
+                  {downloading ? "Preparing…" : "Download (DOCX)"}
+                </button>
+                <button className="btn btn-primary" onClick={() => handleDownload("epub")} disabled={downloading}>
+                  {downloading ? "Preparing…" : "Download (EPUB)"}
+                </button>
+              </div>
             )}
           </div>
         )}

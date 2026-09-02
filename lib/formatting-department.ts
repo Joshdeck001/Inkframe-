@@ -30,53 +30,15 @@ import {
   trimSizeInches,
   contentWidthTwips,
   PAGE_MARGIN_IN,
+  numberToWords,
   type BookDesignProfile,
 } from "@/lib/book-format";
 import { fitToWidth } from "@/lib/image-dimensions";
+import { parseManuscriptBlocks, type CalloutLabel } from "@/lib/manuscript-blocks";
+import { fetchImage, type LoadedImage } from "@/lib/fetch-image";
+import { buildEpubBuffer } from "@/lib/epub-builder";
 
-type DocxImageType = "jpg" | "png" | "gif" | "bmp";
 type DocElement = Paragraph | Table;
-type LoadedImage = { buffer: Buffer; type: DocxImageType };
-
-/**
- * Real cover/interior artwork lives in public storage buckets as plain
- * URLs (cover_department.concepts[].image_ref, image_placements.file_ref)
- * — docx's ImageRun needs actual bytes, not a URL, so this fetches them at
- * export time. Best-effort: a fetch failure just means that one image is
- * skipped, never a reason to fail the whole manuscript export.
- */
-async function fetchImage(url: string): Promise<LoadedImage | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const contentType = res.headers.get("content-type") || "";
-    const type: DocxImageType = contentType.includes("jpeg")
-      ? "jpg"
-      : contentType.includes("gif")
-        ? "gif"
-        : contentType.includes("bmp")
-          ? "bmp"
-          : "png";
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return { buffer, type };
-  } catch {
-    return null;
-  }
-}
-
-const ONES = [
-  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
-];
-const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
-
-function numberToWords(n: number): string {
-  if (n <= 0 || n > 999) return String(n);
-  if (n < 20) return ONES[n];
-  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10].toLowerCase()}` : "");
-  const rest = n % 100;
-  return `${ONES[Math.floor(n / 100)]} Hundred${rest ? ` ${numberToWords(rest)}` : ""}`;
-}
 
 const FIRST_LINE_INDENT = convertInchesToTwip(0.5);
 const LIST_INDENT = convertInchesToTwip(0.25);
@@ -90,10 +52,6 @@ const HAIRLINE = { style: BorderStyle.SINGLE, size: 4, color: "999999" };
 // nothing here invents content that isn't in the manuscript.
 // ---------------------------------------------------------------------------
 
-const CALLOUT_LABELS = [
-  "NOTE", "TIP", "WARNING", "IMPORTANT", "KEY TAKEAWAY", "ACTION STEP", "DEFINITION", "EXAMPLE",
-] as const;
-type CalloutLabel = (typeof CALLOUT_LABELS)[number];
 const CALLOUT_FILL: Record<CalloutLabel, string> = {
   NOTE: "EAF2FB",
   TIP: "EAF7EF",
@@ -104,7 +62,6 @@ const CALLOUT_FILL: Record<CalloutLabel, string> = {
   DEFINITION: "F2F2F2",
   EXAMPLE: "EAF7EF",
 };
-const CALLOUT_PATTERN = new RegExp(`^>\\s*(${CALLOUT_LABELS.join("|")}):\\s*(.*)`);
 
 // docx always serializes a paragraph's w:pBdr children as top/bottom/left/
 // right regardless of the order given here, which violates OOXML's actual
@@ -137,21 +94,11 @@ function quoteParagraph(text: string): Paragraph {
 }
 
 // ---------------------------------------------------------------------------
-// Tables — parsed from GitHub-flavored Markdown pipe tables. Header row is
-// shaded and repeats on every page the table spans (tableHeader: true).
+// Tables — parsed from GitHub-flavored Markdown pipe tables (see
+// lib/manuscript-blocks.ts). Header row is shaded and repeats on every page
+// the table spans (tableHeader: true).
 // ---------------------------------------------------------------------------
 
-function isTableSeparatorRow(line: string): boolean {
-  return /^\|?(\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?$/.test(line.trim());
-}
-function parseTableRow(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((c) => c.trim());
-}
 function buildTable(rows: string[][], widthTwips: number): Table {
   const colCount = Math.max(...rows.map((r) => r.length));
   const colWidth = Math.floor(widthTwips / colCount);
@@ -191,153 +138,74 @@ function buildTable(rows: string[][], widthTwips: number): Table {
  */
 function renderStructuredContent(content: string, contentWidth: number): DocElement[] {
   const elements: DocElement[] = [];
-  let textBuffer: string[] = [];
-  let codeBuffer: string[] | null = null;
-  let calloutLines: { label: CalloutLabel; text: string }[] | null = null;
-  let tableRows: string[][] | null = null;
-
-  const flushText = () => {
-    const text = textBuffer.join(" ").trim();
-    if (text) elements.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 200 }, children: [new TextRun(text)] }));
-    textBuffer = [];
-  };
-  const flushCallout = () => {
-    if (calloutLines && calloutLines.length > 0) {
-      const fill = CALLOUT_FILL[calloutLines[0].label];
-      calloutLines.forEach((line, i) => {
-        const isFirst = i === 0;
-        const isLast = i === calloutLines!.length - 1;
-        const children = isFirst
-          ? [new TextRun({ text: `${line.label}: `, bold: true }), new TextRun(line.text)]
-          : [new TextRun(line.text)];
-        elements.push(calloutBoxParagraph(children, fill, isFirst, isLast));
-      });
-    }
-    calloutLines = null;
-  };
-  const flushTable = () => {
-    if (tableRows && tableRows.length >= 2) {
-      elements.push(buildTable(tableRows, contentWidth));
-      elements.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
-    }
-    tableRows = null;
-  };
-
-  const lines = content.split("\n");
-  for (let idx = 0; idx < lines.length; idx++) {
-    const line = lines[idx].trimEnd();
-
-    if (line.trim().startsWith("```")) {
-      if (codeBuffer === null) {
-        flushText();
-        flushCallout();
-        flushTable();
-        codeBuffer = [];
-      } else {
-        codeBuffer.forEach((codeLine, i) => {
+  for (const block of parseManuscriptBlocks(content)) {
+    switch (block.type) {
+      case "paragraph":
+        elements.push(new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 200 }, children: [new TextRun(block.text)] }));
+        break;
+      case "heading":
+        elements.push(
+          new Paragraph({
+            heading: block.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3,
+            keepNext: true,
+            alignment: AlignmentType.LEFT,
+            spacing: { before: 320, after: 160 },
+            children: [new TextRun({ text: block.text, bold: true, size: block.level === 2 ? 26 : 24 })],
+          })
+        );
+        break;
+      case "bullet":
+        elements.push(
+          new Paragraph({
+            alignment: AlignmentType.LEFT,
+            indent: { left: LIST_INDENT, hanging: LIST_INDENT },
+            spacing: { after: 120 },
+            children: [new TextRun(`•  ${block.text}`)],
+          })
+        );
+        break;
+      case "numbered":
+        elements.push(
+          new Paragraph({
+            alignment: AlignmentType.LEFT,
+            indent: { left: LIST_INDENT, hanging: LIST_INDENT },
+            spacing: { after: 120 },
+            children: [new TextRun(`${block.marker}.  ${block.text}`)],
+          })
+        );
+        break;
+      case "code":
+        block.lines.forEach((codeLine, i) => {
           elements.push(
             new Paragraph({
               shading: { fill: "F2F2F2", type: ShadingType.CLEAR },
-              spacing: { after: i === codeBuffer!.length - 1 ? 200 : 0 },
+              spacing: { after: i === block.lines.length - 1 ? 200 : 0 },
               children: [new TextRun({ text: codeLine || " ", font: "Courier New", size: 20 })],
             })
           );
         });
-        codeBuffer = null;
+        break;
+      case "callout": {
+        const fill = CALLOUT_FILL[block.label];
+        block.lines.forEach((lineText, i) => {
+          const isFirst = i === 0;
+          const isLast = i === block.lines.length - 1;
+          const children = isFirst
+            ? [new TextRun({ text: `${block.label}: `, bold: true }), new TextRun(lineText)]
+            : [new TextRun(lineText)];
+          elements.push(calloutBoxParagraph(children, fill, isFirst, isLast));
+        });
+        break;
       }
-      continue;
-    }
-    if (codeBuffer !== null) {
-      codeBuffer.push(line);
-      continue;
-    }
-
-    const nextLine = lines[idx + 1]?.trim() ?? "";
-    if (tableRows === null && /^\|.*\|\s*$/.test(line.trim()) && isTableSeparatorRow(nextLine)) {
-      flushText();
-      flushCallout();
-      tableRows = [parseTableRow(line)];
-      idx++; // consume the '|---|---|' separator row
-      continue;
-    }
-    if (tableRows !== null) {
-      if (/^\|.*\|\s*$/.test(line.trim())) {
-        tableRows.push(parseTableRow(line));
-        continue;
-      }
-      flushTable();
-    }
-
-    const calloutMatch = line.match(CALLOUT_PATTERN);
-    if (calloutMatch) {
-      flushText();
-      const [, label, text] = calloutMatch;
-      if (calloutLines === null) calloutLines = [];
-      calloutLines.push({ label: label as CalloutLabel, text });
-      continue;
-    }
-    if (calloutLines !== null) {
-      const continuation = line.match(/^>\s*(.*)/);
-      if (continuation) {
-        calloutLines.push({ label: calloutLines[0].label, text: continuation[1] });
-        continue;
-      }
-      flushCallout();
-    }
-
-    const quoteMatch = line.match(/^>\s+(.*)/);
-    if (quoteMatch) {
-      flushText();
-      elements.push(quoteParagraph(quoteMatch[1]));
-      continue;
-    }
-
-    const heading3 = line.match(/^###\s+(.*)/);
-    const heading2 = !heading3 && line.match(/^##\s+(.*)/);
-    const bullet = line.match(/^[-*]\s+(.*)/);
-    const numbered = line.match(/^(\d+)[.)]\s+(.*)/);
-
-    if (heading2 || heading3) {
-      flushText();
-      const [, text] = (heading2 || heading3) as RegExpMatchArray;
-      elements.push(
-        new Paragraph({
-          heading: heading2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3,
-          keepNext: true,
-          alignment: AlignmentType.LEFT,
-          spacing: { before: 320, after: 160 },
-          children: [new TextRun({ text, bold: true, size: heading2 ? 26 : 24 })],
-        })
-      );
-    } else if (bullet) {
-      flushText();
-      elements.push(
-        new Paragraph({
-          alignment: AlignmentType.LEFT,
-          indent: { left: LIST_INDENT, hanging: LIST_INDENT },
-          spacing: { after: 120 },
-          children: [new TextRun(`•  ${bullet[1]}`)],
-        })
-      );
-    } else if (numbered) {
-      flushText();
-      elements.push(
-        new Paragraph({
-          alignment: AlignmentType.LEFT,
-          indent: { left: LIST_INDENT, hanging: LIST_INDENT },
-          spacing: { after: 120 },
-          children: [new TextRun(`${numbered[1]}.  ${numbered[2]}`)],
-        })
-      );
-    } else if (line.trim().length === 0) {
-      flushText();
-    } else {
-      textBuffer.push(line.trim());
+      case "quote":
+        elements.push(quoteParagraph(block.text));
+        break;
+      case "table":
+        elements.push(buildTable(block.rows, contentWidth));
+        elements.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+        break;
     }
   }
-  flushText();
-  flushCallout();
-  flushTable();
   return elements;
 }
 
@@ -392,8 +260,14 @@ function runningHeader(text: string): Header {
  * title on odd pages / the book title on even pages, both suppressed on
  * each chapter's own opening page. A real, auto-updating Table of Contents
  * field is generated from the actual chapter headings — never a
- * hand-typed fake one. EPUB/PDF aren't implemented yet — output_formats
- * only ever lists what was actually produced, never a format that doesn't
+ * hand-typed fake one.
+ *
+ * A real EPUB 3 (lib/epub-builder.ts) is generated alongside it from the
+ * same content — same Book Design Profile, same chapters/images, same
+ * manuscript-block parsing (lib/manuscript-blocks.ts) — so a Markdown
+ * syntax fix or a new callout type only ever needs to happen once and
+ * both formats stay in sync. PDF isn't implemented; output_formats only
+ * ever lists what was actually produced, never a format that doesn't
  * exist as a real file.
  */
 export async function runFormattingDepartmentTick(supabase: SupabaseClient): Promise<{
@@ -452,7 +326,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
 
   const { data: formattingJob, error: jobError } = await supabase
     .from("formatting_jobs")
-    .insert({ project_id: project.id, output_formats: ["docx"], status: "processing" })
+    .insert({ project_id: project.id, output_formats: ["docx", "epub"], status: "processing" })
     .select()
     .single();
   if (jobError) throw new Error(jobError.message);
@@ -530,23 +404,31 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       children: [...titlePageParagraphs, ...copyrightParagraphs, ...tocParagraphs],
     };
 
-    // ---- Body: one docx section per chapter, so running headers/page
-    // numbering can genuinely change per chapter and reset at the body. ----
+    // ---- Load every chapter's interior images once, sequentially (not
+    // Promise.all — figure numbers must increment in chapter order, which
+    // parallel fetches racing each other can't guarantee), and reuse the
+    // same loaded bytes for both the DOCX and EPUB outputs below. ----
     let figureNumber = 0;
     const chapterList = chapters ?? [];
-    const chapterSections = await Promise.all(
-      chapterList.map(async (chapter, chapterIndex) => {
-        const images = interiorImagesByChapter.get(chapter.id) ?? [];
-        const loadedImages: { image: LoadedImage; caption: string | null }[] = [];
-        for (const p of images) {
-          const image = await fetchImage(p.file_ref);
-          if (image) {
-            figureNumber++;
-            loadedImages.push({ image, caption: `Figure ${figureNumber}${p.placement_location ? `. ${p.placement_location}` : ""}` });
-          }
+    const chapterImages: { image: LoadedImage; caption: string | null }[][] = [];
+    for (const chapter of chapterList) {
+      const images = interiorImagesByChapter.get(chapter.id) ?? [];
+      const loaded: { image: LoadedImage; caption: string | null }[] = [];
+      for (const p of images) {
+        const image = await fetchImage(p.file_ref);
+        if (image) {
+          figureNumber++;
+          loaded.push({ image, caption: `Figure ${figureNumber}${p.placement_location ? `. ${p.placement_location}` : ""}` });
         }
+      }
+      chapterImages.push(loaded);
+    }
 
-        const bodyElements: DocElement[] = family === "fiction" ? renderProseContent(chapter.content, profile) : renderStructuredContent(chapter.content, contentWidth);
+    // ---- Body: one docx section per chapter, so running headers/page
+    // numbering can genuinely change per chapter and reset at the body. ----
+    const chapterSections = chapterList.map((chapter, chapterIndex) => {
+      const loadedImages = chapterImages[chapterIndex];
+      const bodyElements: DocElement[] = family === "fiction" ? renderProseContent(chapter.content, profile) : renderStructuredContent(chapter.content, contentWidth);
 
         const imageElements: Paragraph[] = loadedImages.flatMap(({ image, caption }) => [
           new Paragraph({
@@ -597,8 +479,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
           footers: { default: pageNumberFooter(), first: pageNumberFooter() },
           children,
         };
-      })
-    );
+    });
 
     // ---- Back matter: only what's actually backed by real data. ----
     const backMatterSections = identity?.author_name
@@ -629,25 +510,46 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       sections: [frontMatterSection, ...chapterSections, ...backMatterSections],
     });
 
-    const buffer = await Packer.toBuffer(doc);
-    const path = `${project.user_id}/${project.id}/manuscript.docx`;
-
-    const { error: uploadError } = await supabase.storage.from("exports").upload(path, buffer, {
-      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      upsert: true,
+    const docxBuffer = await Packer.toBuffer(doc);
+    const epubBuffer = await buildEpubBuffer({
+      title,
+      subtitle: identity?.subtitle ?? null,
+      authorName: identity?.author_name ?? null,
+      family,
+      coverImage,
+      chapters: chapterList.map((chapter, i) => ({
+        chapterNumber: chapter.chapter_number,
+        title: chapter.title,
+        content: chapter.content,
+        images: chapterImages[i],
+      })),
     });
-    if (uploadError) throw new Error(uploadError.message);
+
+    const docxPath = `${project.user_id}/${project.id}/manuscript.docx`;
+    const epubPath = `${project.user_id}/${project.id}/manuscript.epub`;
+
+    const [{ error: docxUploadError }, { error: epubUploadError }] = await Promise.all([
+      supabase.storage.from("exports").upload(docxPath, docxBuffer, {
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        upsert: true,
+      }),
+      supabase.storage.from("exports").upload(epubPath, epubBuffer, {
+        contentType: "application/epub+zip",
+        upsert: true,
+      }),
+    ]);
+    if (docxUploadError) throw new Error(docxUploadError.message);
+    if (epubUploadError) throw new Error(epubUploadError.message);
 
     await supabase
       .from("formatting_jobs")
-      .update({ status: "complete", output_files: [path] })
+      .update({ status: "complete", output_files: [docxPath, epubPath] })
       .eq("id", formattingJob.id);
 
-    await supabase.from("export_records").insert({
-      project_id: project.id,
-      export_type: "full_manuscript",
-      file_ref: path,
-    });
+    await supabase.from("export_records").insert([
+      { project_id: project.id, export_type: "full_manuscript", file_ref: docxPath },
+      { project_id: project.id, export_type: "full_manuscript", file_ref: epubPath },
+    ]);
 
     // Final Quality Gate (Step 10) — a deterministic summary of everything
     // Steps 5-9 already produced, computed now that every input exists.
@@ -658,7 +560,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     const embeddedImages = (coverImage ? 1 : 0) + figureNumber;
     return {
       processed: true,
-      detail: `Project ${project.id}: manuscript.docx generated (${family} design profile, ${embeddedImages} image(s) embedded), quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
+      detail: `Project ${project.id}: manuscript.docx and manuscript.epub generated (${family} design profile, ${embeddedImages} image(s) embedded), quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
     };
   } catch (e) {
     await supabase.from("formatting_jobs").update({ status: "failed" }).eq("id", formattingJob.id);

@@ -39,6 +39,15 @@
      `exports`/`uploads`: avatars need to render directly as `<img src>`
      without a signed URL. Writes are still owner-scoped, one folder per
      user, same `storage.objects` RLS pattern as `0005_uploads_bucket.sql`.
+   - `supabase/migrations/0009_translation_jobs_rls_fix.sql` — a real bug
+     fix, found live: `translation_jobs`' own check constraint allows a
+     row with either `source_project_id` (an existing book) or
+     `source_file` (an uploaded manuscript) set, but the original RLS
+     policy only ever authorized the `source_project_id` case — every
+     "Upload manuscript" translation was rejected by RLS, for every user,
+     unconditionally. Fixed to authorize both, the upload case scoped to
+     the uploader's own `{user_id}/...` path prefix, same as the
+     `uploads` bucket's own storage policies already do.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

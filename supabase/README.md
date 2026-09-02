@@ -48,6 +48,14 @@
      unconditionally. Fixed to authorize both, the upload case scoped to
      the uploader's own `{user_id}/...` path prefix, same as the
      `uploads` bucket's own storage policies already do.
+   - `supabase/migrations/0010_covers_bucket.sql` — a public `covers`
+     bucket for real generated cover artwork (the Cover Department used to
+     only ever produce text prompts). Public read, same as `avatars`, for
+     the same reason: it needs to render as a plain `<img src>` without
+     signed-URL ceremony, and a book cover isn't sensitive content. No
+     client insert/update/delete policy — only the server (service-role
+     client, from the Cover Department's background tick) ever writes
+     here, same as the private `exports` bucket being server-write-only.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

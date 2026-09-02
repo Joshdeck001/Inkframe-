@@ -448,6 +448,54 @@ Gemini (or OpenAI, if that key works from Vercel's network) instead of
 Claude, invisibly, because that's exactly what the fallback chain is
 built to do.
 
+## Real cover-art generation — OpenAI and Gemini working together
+
+The Cover Department used to only ever produce three text prompts — no
+actual artwork, ever. It now attempts real images too, through
+`lib/image-client.ts`:
+
+- **OpenAI first, then Gemini — never Claude.** Claude has no
+  image-generation capability at all, so unlike the text/structured
+  fallback chain above, this one is two providers, not three. Each
+  provider is skipped if its key isn't set.
+- **One image attempt per cron tick, per concept**, same "one unit of work
+  per tick" shape as every other department (`lib/cover-department.ts`).
+  The first tick after a book's chapters are all quality-approved drafts
+  the 3 text concepts (as before); each subsequent tick attempts real
+  artwork for the next concept that hasn't been tried yet. Once all 3 have
+  been attempted, the project moves on to Metadata — it never blocks on
+  image generation succeeding.
+- **Bounded retry, never fabricated.** A concept that fails to produce a
+  real image (no key, no billing, provider down, whatever) is marked
+  attempted and left exactly as it always was — a real, usable prompt with
+  no image — instead of being retried forever or having a fake image
+  substituted in.
+- **Real images upload to a new public `covers` bucket**
+  (`0010_covers_bucket.sql`, same public-read pattern as `avatars`) and
+  render directly on the Cover Designer page (`/cover`) above their
+  prompt once generated.
+- **Model names are configurable** — `OPENAI_IMAGE_MODEL` / `GEMINI_IMAGE_MODEL`
+  env vars, same pattern as `OPENAI_MODEL`/`GEMINI_MODEL` above.
+
+**A real, live finding from building this, not a hypothetical:** Gemini's
+image endpoint (`generateImages()` / Imagen) is deprecated and, per
+Google's own error message, only works on Vertex AI/Enterprise now, not a
+plain Gemini API key — the code here uses the current working path
+(`generateContent()` with `responseModalities: [IMAGE]`) instead. Tested
+live against this project's actual Gemini key, the request correctly
+resolved to a real model, but failed with `429 RESOURCE_EXHAUSTED` —
+**the free tier has a zero quota for image-generation models.** Google
+requires billing enabled on the Google Cloud/AI Studio project for image
+generation to work at all. OpenAI's image endpoint couldn't be tested live
+from this environment (network-blocked), but the same kind of
+billing-enabled-account requirement likely applies there too. Until
+billing is enabled on at least one of the two, cover concepts will keep
+generating as prompt-only text — same as before this feature existed, now
+for a documented reason instead of silently.
+
+Interior/in-manuscript images (the `/images` page, `image_placements`
+table) are a separate, unbuilt feature — see the Images bullet above.
+
 ## Dashboard sidebar — every item now goes somewhere
 
 The dashboard's sidebar originally had 11 nav items and a notification
@@ -473,9 +521,11 @@ real, reusing the same visual language as the 8 approved pages
   picture upload (private-per-user-folder, publicly-readable `avatars`
   bucket — `0008_avatars_bucket.sql`), and sign out.
 - **Help & Support** (`/help`) — static FAQ.
-- **Templates** and **Images** — honestly labeled "not built yet" rather
-  than faked, since no template system or image-generation backend
-  exists.
+- **Templates** — honestly labeled "not built yet" rather than faked, since
+  no template system exists. **Images** (in-manuscript/interior images) is
+  also still "not built yet" — a different, larger feature from cover
+  generation below, since it needs placement-decision logic (which chapter
+  gets an image, where) that doesn't exist anywhere yet.
 - **AI Writing Agent** routes to `/job-progress` for whichever project is
   actually active.
 - The **notification bell** is a real dropdown computed from actual
@@ -495,8 +545,10 @@ real, reusing the same visual language as the 8 approved pages
 
 All 15 steps of the original build plan are done. What's left is mostly
 things that need a real account to verify (confirm the Admin Panel and AI
-Copilot behave as expected against your live Supabase project) or genuine
-product decisions rather than more scaffolding — e.g. wiring an actual
-image-generation API for the Cover Department, or building the Templates
-feature that's currently honestly labeled "not built yet." See the roadmap
-in `InkFrame_Opening_ClaudeCode_Prompt.md` for anything not covered above.
+Copilot behave as expected against your live Supabase project, and that
+cover-image generation actually produces artwork once billing is enabled
+on OpenAI or Google AI Studio/Cloud) or genuine product decisions rather
+than more scaffolding — e.g. interior/in-manuscript image placement, or
+building the Templates feature that's currently honestly labeled "not
+built yet." See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md` for
+anything not covered above.

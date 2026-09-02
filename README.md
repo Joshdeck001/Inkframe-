@@ -115,22 +115,34 @@ All in `.env.local` (gitignored, never committed) — see
      action_required), the latest title-risk result, and chapter-length
      guidance for serial platforms — into `compliance_checks`.
    - `/api/cron/formatting-department` assembles every approved chapter
-     into a real `.docx` file (the `docx` npm package) and uploads it to a
-     new private Supabase Storage bucket (`supabase/migrations/0003_storage.sql`).
-     `/api/export-download` hands back a 60-second signed URL after
-     verifying the requester owns the project — there's no direct client
-     read access to the bucket. Only `docx` is produced; EPUB/PDF aren't
-     implemented, and `formatting_jobs.output_formats` only ever lists
-     what was actually generated. **Real cover and interior images are
-     embedded directly in the file, not just referenced** — the department
-     fetches the actual generated artwork (from the `covers` and
-     `manuscript-images` buckets) at export time and inserts it as real
-     image data (`docx`'s `ImageRun`, cover centered on the title page,
-     each interior image right under its chapter heading), so opening the
-     downloaded `.docx` in Word/Google Docs shows the pictures inline —
-     it's not just prompt text. With no real artwork generated yet (no
-     billing enabled), the manuscript exports exactly as it always did:
-     text only, no broken image placeholders.
+     into a real, professionally formatted `.docx` file (the `docx` npm
+     package) and uploads it to a new private Supabase Storage bucket
+     (`supabase/migrations/0003_storage.sql`). `/api/export-download`
+     hands back a 60-second signed URL after verifying the requester owns
+     the project — there's no direct client read access to the bucket.
+     Only `docx` is produced; EPUB/PDF aren't implemented, and
+     `formatting_jobs.output_formats` only ever lists what was actually
+     generated. **Real cover and interior images are embedded directly in
+     the file, not just referenced** — the department fetches the actual
+     generated artwork (from the `covers` and `manuscript-images`
+     buckets) at export time and inserts it as real image data (`docx`'s
+     `ImageRun`, cover centered on the title page, each interior image
+     right under its chapter heading), so opening the downloaded `.docx`
+     in Word/Google Docs shows the pictures inline — it's not just prompt
+     text. With no real artwork generated yet (no billing enabled), the
+     manuscript exports exactly as it always did: text only, no broken
+     image placeholders. **Real book typography, not a default Word
+     document** — 6×9in trim (a standard KDP paperback size), 0.75in
+     margins, Times New Roman body text justified with 0.5in first-line
+     indents (no indent on a chapter's opening paragraph, the standard
+     typographic convention), a centered "Chapter One"/"Chapter Two"/…
+     heading (spelled out, not a bare numeral) with the chapter's own
+     title beneath it in italics, and a centered page number in the
+     footer of every page. Verified directly against the generated
+     `.docx`'s internal XML (page size, margins, justification, indent
+     values, the footer's page-number field, and the embedded font all
+     confirmed present and correct) rather than just assumed from the
+     `docx` library's API.
 
    Once formatting finishes, status reaches `READY_FOR_REVIEW` and
    `job-progress` shows the real metadata, cover concept prompts, and

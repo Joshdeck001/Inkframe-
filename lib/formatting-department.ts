@@ -1,4 +1,16 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak, ImageRun, AlignmentType } from "docx";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  HeadingLevel,
+  PageBreak,
+  ImageRun,
+  AlignmentType,
+  Footer,
+  PageNumber,
+  convertInchesToTwip,
+} from "docx";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQualityGate } from "@/lib/quality-gate";
 import { getPausedProjectIds } from "@/lib/production-paused";
@@ -31,11 +43,30 @@ async function fetchImage(url: string): Promise<{ buffer: Buffer; type: DocxImag
   }
 }
 
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function numberToWords(n: number): string {
+  if (n <= 0 || n > 999) return String(n);
+  if (n < 20) return ONES[n];
+  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10].toLowerCase()}` : "");
+  const rest = n % 100;
+  return `${ONES[Math.floor(n / 100)]} Hundred${rest ? ` ${numberToWords(rest)}` : ""}`;
+}
+
+const BODY_FONT = "Times New Roman";
+const FIRST_LINE_INDENT = convertInchesToTwip(0.5);
+
 /**
- * Assembles the approved manuscript into a DOCX file and stores it in the
- * private `exports` bucket. EPUB/PDF aren't implemented yet — output_formats
- * only ever lists what was actually produced, never a format that doesn't
- * exist as a real file.
+ * Assembles the approved manuscript into a real, professionally formatted
+ * DOCX (6x9in trim — a standard KDP paperback size — serif body text,
+ * justified with first-line indents, centered chapter headings, and page
+ * numbers) and stores it in the private `exports` bucket. EPUB/PDF aren't
+ * implemented yet — output_formats only ever lists what was actually
+ * produced, never a format that doesn't exist as a real file.
  */
 export async function runFormattingDepartmentTick(supabase: SupabaseClient): Promise<{
   processed: boolean;
@@ -91,45 +122,101 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
             new Paragraph({
               children: [new ImageRun({ type: coverImage.type, data: coverImage.buffer, transformation: { width: 400, height: 400 } })],
               alignment: AlignmentType.CENTER,
-              spacing: { after: 200 },
+              spacing: { after: 400 },
             }),
           ]
         : []),
       new Paragraph({
         text: identity?.working_title || "Untitled Project",
         heading: HeadingLevel.TITLE,
+        alignment: AlignmentType.CENTER,
+        spacing: { before: coverImage ? 0 : 2400 },
       }),
-      ...(identity?.subtitle ? [new Paragraph({ text: identity.subtitle, heading: HeadingLevel.HEADING_2 })] : []),
-      ...(identity?.author_name ? [new Paragraph({ text: identity.author_name })] : []),
+      ...(identity?.subtitle
+        ? [new Paragraph({ text: identity.subtitle, heading: HeadingLevel.HEADING_2, alignment: AlignmentType.CENTER })]
+        : []),
+      ...(identity?.author_name
+        ? [new Paragraph({ text: identity.author_name, alignment: AlignmentType.CENTER, spacing: { before: 480 } })]
+        : []),
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
-    const chapterParagraphs = (chapters ?? []).flatMap((chapter) => {
+    const chapterCount = (chapters ?? []).length;
+    const chapterParagraphs = (chapters ?? []).flatMap((chapter, chapterIndex) => {
       const image = interiorImages.get(chapter.id);
+      const bodyParagraphs = chapter.content
+        .split(/\n{2,}/)
+        .filter((p: string) => p.trim().length > 0)
+        .map(
+          (p: string, i: number) =>
+            new Paragraph({
+              children: [new TextRun(p.trim())],
+              alignment: AlignmentType.JUSTIFIED,
+              indent: i === 0 ? undefined : { firstLine: FIRST_LINE_INDENT },
+            })
+        );
+
       return [
         new Paragraph({
-          text: `Chapter ${chapter.chapter_number}: ${chapter.title}`,
-          heading: HeadingLevel.HEADING_1,
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 1200, after: chapter.title ? 80 : 480 },
+          children: [new TextRun({ text: `Chapter ${numberToWords(chapter.chapter_number)}`, bold: true, size: 28 })],
         }),
+        ...(chapter.title
+          ? [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 480 },
+                children: [new TextRun({ text: chapter.title, italics: true, size: 24 })],
+              }),
+            ]
+          : []),
         ...(image
           ? [
               new Paragraph({
                 children: [new ImageRun({ type: image.type, data: image.buffer, transformation: { width: 300, height: 300 } })],
                 alignment: AlignmentType.CENTER,
-                spacing: { after: 200 },
+                spacing: { after: 400 },
               }),
             ]
           : []),
-        ...chapter.content
-          .split(/\n{2,}/)
-          .filter((p: string) => p.trim().length > 0)
-          .map((p: string) => new Paragraph({ children: [new TextRun(p.trim())], spacing: { after: 200 } })),
-        new Paragraph({ children: [new PageBreak()] }),
+        ...bodyParagraphs,
+        ...(chapterIndex < chapterCount - 1 ? [new Paragraph({ children: [new PageBreak()] })] : []),
       ];
     });
 
     const doc = new Document({
-      sections: [{ children: [...titleParagraphs, ...chapterParagraphs] }],
+      styles: {
+        default: {
+          document: { run: { font: BODY_FONT, size: 24 } },
+        },
+      },
+      sections: [
+        {
+          properties: {
+            page: {
+              size: { width: convertInchesToTwip(6), height: convertInchesToTwip(9) },
+              margin: {
+                top: convertInchesToTwip(0.75),
+                bottom: convertInchesToTwip(0.75),
+                left: convertInchesToTwip(0.75),
+                right: convertInchesToTwip(0.75),
+              },
+            },
+          },
+          footers: {
+            default: new Footer({
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new TextRun({ children: [PageNumber.CURRENT] })],
+                }),
+              ],
+            }),
+          },
+          children: [...titleParagraphs, ...chapterParagraphs],
+        },
+      ],
     });
 
     const buffer = await Packer.toBuffer(doc);

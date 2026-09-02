@@ -493,8 +493,38 @@ billing is enabled on at least one of the two, cover concepts will keep
 generating as prompt-only text — same as before this feature existed, now
 for a documented reason instead of silently.
 
-Interior/in-manuscript images (the `/images` page, `image_placements`
-table) are a separate, unbuilt feature — see the Images bullet above.
+## Interior/in-manuscript images — the Image Department
+
+The `/images` page and `image_placements` table existed in the original
+schema (Step 6) but nothing ever populated them. They now do, through a
+new pipeline stage — `GENERATING_IMAGES`, between cover art and metadata —
+and `lib/image-department.ts`:
+
+- **Only runs when the wizard's Step 7 asked for it.** "No Images" and
+  "I'll upload my own" skip straight through untouched — manual upload
+  still isn't built. "Generate automatically" or "Mix of both" only
+  trigger real placement + generation when the user also said yes to
+  "recommend placements" on that same step; saying no there leaves the
+  book to move on with no interior images, same as before this feature
+  existed.
+- **Placement is a real AI decision, not a fixed rule.** The first tick
+  for a project sends the chapter list (number, title, objective) to the
+  same 3-provider text fallback as everything else (`lib/ai-client.ts`)
+  and asks it which chapters — if any — would genuinely benefit from one
+  illustration, where in the chapter, and a concrete image prompt for
+  each. It's explicitly fine for it to propose zero; most chapters don't
+  need one.
+- **Same real-artwork pipeline as covers** — one image attempt per cron
+  tick, per placement, through `lib/image-client.ts` (OpenAI then
+  Gemini), uploading to a new public `manuscript-images` bucket
+  (`0011_interior_images.sql`). A placement that fails to produce a real
+  image is marked attempted and left exactly as it's always been — a
+  real, usable prompt with no image — same bounded-retry, never-fabricate
+  rule as the Cover Department. Needs the same billing-enabled OpenAI or
+  Gemini account as cover images do.
+- **`/images` now shows real placements and artwork** per book instead of
+  the old "not built yet" placeholder — chapter, placement location,
+  prompt, and the generated image once one exists.
 
 ## Dashboard sidebar — every item now goes somewhere
 
@@ -523,9 +553,7 @@ real, reusing the same visual language as the 8 approved pages
 - **Help & Support** (`/help`) — static FAQ.
 - **Templates** — honestly labeled "not built yet" rather than faked, since
   no template system exists. **Images** (in-manuscript/interior images) is
-  also still "not built yet" — a different, larger feature from cover
-  generation below, since it needs placement-decision logic (which chapter
-  gets an image, where) that doesn't exist anywhere yet.
+  real now — see "Interior/in-manuscript images" below.
 - **AI Writing Agent** routes to `/job-progress` for whichever project is
   actually active.
 - The **notification bell** is a real dropdown computed from actual
@@ -546,9 +574,9 @@ real, reusing the same visual language as the 8 approved pages
 All 15 steps of the original build plan are done. What's left is mostly
 things that need a real account to verify (confirm the Admin Panel and AI
 Copilot behave as expected against your live Supabase project, and that
-cover-image generation actually produces artwork once billing is enabled
-on OpenAI or Google AI Studio/Cloud) or genuine product decisions rather
-than more scaffolding — e.g. interior/in-manuscript image placement, or
-building the Templates feature that's currently honestly labeled "not
-built yet." See the roadmap in `InkFrame_Opening_ClaudeCode_Prompt.md` for
-anything not covered above.
+cover and interior image generation actually produce artwork once billing
+is enabled on OpenAI or Google AI Studio/Cloud) or genuine product
+decisions rather than more scaffolding — e.g. manual image upload for the
+"I'll upload my own" workflow, or building the Templates feature that's
+currently honestly labeled "not built yet." See the roadmap in
+`InkFrame_Opening_ClaudeCode_Prompt.md` for anything not covered above.

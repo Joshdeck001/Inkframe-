@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { runWritingAgentTick } from "@/lib/writing-agent";
 import { runQualityLoopTick } from "@/lib/quality-loop";
 import { runCoverDepartmentTick } from "@/lib/cover-department";
+import { runImageDepartmentTick } from "@/lib/image-department";
 import { runMetadataDepartmentTick } from "@/lib/metadata-department";
 import { runComplianceDepartmentTick } from "@/lib/compliance-department";
 import { runFormattingDepartmentTick } from "@/lib/formatting-department";
@@ -16,6 +17,7 @@ export const DEPARTMENTS: DepartmentEntry[] = [
   { name: "writing-agent", run: runWritingAgentTick },
   { name: "quality-loop", run: runQualityLoopTick },
   { name: "cover-department", run: runCoverDepartmentTick },
+  { name: "image-department", run: runImageDepartmentTick },
   { name: "metadata-department", run: runMetadataDepartmentTick },
   { name: "compliance-department", run: runComplianceDepartmentTick },
   { name: "formatting-department", run: runFormattingDepartmentTick },

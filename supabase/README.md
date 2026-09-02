@@ -56,6 +56,15 @@
      client insert/update/delete policy — only the server (service-role
      client, from the Cover Department's background tick) ever writes
      here, same as the private `exports` bucket being server-write-only.
+   - `supabase/migrations/0011_interior_images.sql` — turns on real
+     interior/in-manuscript images (the Image Department). Adds
+     `GENERATING_IMAGES` as a new pipeline stage between cover art and
+     metadata generation; adds `image_placements.image_attempted`, the
+     same bounded-retry bookkeeping the Cover Department uses, so a
+     permanently-unavailable image provider doesn't get retried forever;
+     adds the foreign key `image_placements.chapter_id` was always
+     missing (harmless until something actually populated the column);
+     and a public `manuscript-images` bucket, same pattern as `covers`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

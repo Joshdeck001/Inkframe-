@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // Research (Step 8's category-research half) doesn't post anything back to
 // this page yet, so it stays visually pending regardless of status — every
 // other stage is real (Steps 5-9) and only ever marked done in the order
-// it's actually run: Blueprint, Writing, Quality, Cover, Metadata,
+// it's actually run: Blueprint, Writing, Quality, Cover, Images, Metadata,
 // Compliance, Export (the DOCX Formatting Department produces).
 const PIPELINE = [
   { key: "blueprint", label: "Blueprint", icon: "✓", implemented: true },
@@ -18,6 +18,7 @@ const PIPELINE = [
   { key: "writing", label: "Writing", icon: "✎", implemented: true },
   { key: "quality", label: "Quality", icon: "◈", implemented: true },
   { key: "cover", label: "Cover", icon: "🎨", implemented: true },
+  { key: "images", label: "Images", icon: "🖼", implemented: true },
   { key: "metadata", label: "Metadata", icon: "▤", implemented: true },
   { key: "compliance", label: "Compliance", icon: "✓", implemented: true },
   { key: "export", label: "Export", icon: "▦", implemented: true },
@@ -37,17 +38,19 @@ function stageIndexForStatus(status: string): number {
       return 3; // chapters written, Quality Loop actively scoring/revising
     case "GENERATING_COVER":
       return 4;
-    case "GENERATING_METADATA":
+    case "GENERATING_IMAGES":
       return 5;
-    case "COMPLIANCE_CHECK":
+    case "GENERATING_METADATA":
       return 6;
+    case "COMPLIANCE_CHECK":
+      return 7;
     case "FORMATTING":
-      return 7; // generating the DOCX
+      return 8; // generating the DOCX
     case "READY_FOR_REVIEW":
     case "USER_APPROVED":
     case "READY_FOR_EXPORT":
     case "EXPORTED":
-      return 8; // past the last real stage — everything implemented is done
+      return 9; // past the last real stage — everything implemented is done
     default:
       return -1;
   }
@@ -63,6 +66,8 @@ function taskTextForStatus(status: string): string {
       return "Chapters drafted — running the Quality Loop.";
     case "GENERATING_COVER":
       return "Drafting cover concepts.";
+    case "GENERATING_IMAGES":
+      return "Deciding on interior image placements.";
     case "GENERATING_METADATA":
       return "Writing description, keywords, and categories.";
     case "COMPLIANCE_CHECK":

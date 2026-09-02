@@ -22,6 +22,7 @@ const STATUS_LABEL: Record<string, string> = {
   WRITING: "Writing",
   REVIEWING: "Reviewing",
   GENERATING_COVER: "Generating Cover",
+  GENERATING_IMAGES: "Generating Images",
   GENERATING_METADATA: "Generating Metadata",
   COMPLIANCE_CHECK: "Compliance Check",
   FORMATTING: "Formatting",

@@ -120,11 +120,11 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
   const nextIndex = concepts.findIndex((c) => !c.image_attempted);
 
   if (nextIndex === -1) {
-    await supabase.from("projects").update({ status: "GENERATING_METADATA" }).eq("id", project.id);
+    await supabase.from("projects").update({ status: "GENERATING_IMAGES" }).eq("id", project.id);
     const generatedCount = concepts.filter((c) => c.status === "generated").length;
     return {
       processed: true,
-      detail: `Project ${project.id}: cover artwork attempts complete (${generatedCount}/${concepts.length} real images), moved to GENERATING_METADATA.`,
+      detail: `Project ${project.id}: cover artwork attempts complete (${generatedCount}/${concepts.length} real images), moved to GENERATING_IMAGES.`,
     };
   }
 

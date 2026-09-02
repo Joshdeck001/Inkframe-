@@ -368,7 +368,6 @@ function WizardBody() {
           target_word_count: targetWordCount || null,
           estimated_chapter_count: estimatedChapterCount || null,
           desired_depth: desiredDepth || null,
-          trim_size: trimSize || null,
         }),
         supabase.from("project_style").insert({
           project_id: pid,
@@ -393,6 +392,14 @@ function WizardBody() {
         (r) => r.error
       )?.error;
       if (firstError) throw new Error(firstError.message);
+
+      // Best-effort, kept out of the required inserts above — see the same
+      // note in generateBlueprint(): a stale PostgREST schema cache on some
+      // Supabase projects can reject writes to this newer column even
+      // though it exists, and that must never be able to block creating the
+      // project itself over a field the formatting engine already has a
+      // safe default for.
+      await supabase.from("project_scope").update({ trim_size: trimSize || null }).eq("project_id", pid);
 
       setProjectId(pid);
       return pid;
@@ -438,10 +445,19 @@ function WizardBody() {
           target_word_count: targetWordCount || null,
           estimated_chapter_count: estimatedChapterCount || null,
           desired_depth: desiredDepth || null,
-          trim_size: trimSize || null,
         })
         .eq("project_id", pid);
       if (scopeError) throw new Error(scopeError.message);
+
+      // Kept separate and best-effort: trim_size lives on a newer column
+      // (0013_book_formatting.sql) that a stale PostgREST schema cache can
+      // reject with "Could not find the column in the schema cache" on some
+      // Supabase projects even though it genuinely exists — bundling it into
+      // the update above would fail the WHOLE request (including the
+      // chapter-count sync that actually matters here) over a trim-size
+      // write that's non-critical either way (the formatting engine already
+      // falls back to a sensible default when trim_size is unset).
+      await supabase.from("project_scope").update({ trim_size: trimSize || null }).eq("project_id", pid);
 
       const res = await fetch("/api/blueprint", {
         method: "POST",

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { generateStructured, type ToolSpec } from "@/lib/ai-client";
 import { withJsonErrors } from "@/lib/api-guard";
-import type { BlueprintStructure } from "@/lib/blueprint-schema";
+import { enforceChapterCount, type BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // Vercel Pro's standard ceiling
@@ -117,6 +117,14 @@ export const POST = withJsonErrors(async (request: Request) => {
       maxTokens: 8000,
     });
     structure = result.output;
+    // The system prompt above tells the model the chapter count is a hard
+    // requirement, but that's still just an instruction — real generations
+    // have landed anywhere from 9 to 48 chapters against the same "exactly
+    // 48" request. This guarantees it regardless of how well any given
+    // model actually followed the prompt.
+    if (scope?.estimated_chapter_count) {
+      structure = enforceChapterCount(structure, scope.estimated_chapter_count);
+    }
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Blueprint generation did not return structured output." },

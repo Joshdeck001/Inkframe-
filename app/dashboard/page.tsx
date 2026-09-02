@@ -455,7 +455,7 @@ export default function DashboardPage() {
                     "?"
                   )}
                 </div>{" "}
-                {displayName || "Loading…"} ⌄
+                <span>{displayName || "Loading…"} ⌄</span>
                 {profileMenuOpen && (
                   <div
                     style={{

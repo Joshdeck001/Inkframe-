@@ -704,6 +704,33 @@ straightforward to add once there's a way to verify it end-to-end (either
 in a real Vercel environment, or once headless rendering works in this
 sandbox).
 
+### Import your own manuscript, skip the writing cost entirely
+
+`/import` (linked from the dashboard's "Import Manuscript" action) lets an
+author who already wrote the book upload a `.docx` and have InkFrame format
+it — no Writing Agent, no Quality Loop, zero AI writing cost. It creates a
+project the same way the wizard does, but seeds `chapters` directly from
+the uploaded content instead of an AI blueprint, with every chapter marked
+`approved` immediately so the Quality Loop never touches (and never
+silently rewrites) the author's own words. Cover art, metadata, compliance
+checks, and formatting still run automatically afterward, same as any
+AI-written book.
+
+The uploaded document is converted (`lib/manuscript-import.ts`, `mammoth`)
+into the exact same lightweight-Markdown dialect the Writing Agent itself
+produces, so it flows through the identical, already-verified DOCX/EPUB
+rendering pipeline — bold/italic, sub-headings, and bullet/numbered lists
+all carry over, not just plain text. Chapter splitting looks for Word's
+built-in "Heading 1" paragraph style; a manuscript with no Heading 1s is
+imported as a single chapter rather than guessed at, since a wrong
+automatic split would scramble the author's own manuscript with no easy
+way to notice. Verified with a real generated `.docx` round-tripped through
+`mammoth` → the converter → the actual DOCX renderer → the strict OOXML
+schema checker, not just unit-tested in isolation. Only `.docx` is
+supported — that's the one format the chapter-splitting logic was actually
+built and verified against; PDF/plain-text input would need their own real
+verification, not an assumption this route makes.
+
 ## Dashboard sidebar — every item now goes somewhere
 
 The dashboard's sidebar originally had 11 nav items and a notification

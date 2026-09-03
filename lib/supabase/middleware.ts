@@ -17,6 +17,7 @@ const PROTECTED_PREFIXES = [
   "/metadata",
   "/compliance",
   "/admin",
+  "/import",
 ];
 
 export async function updateSession(request: NextRequest) {

@@ -608,15 +608,7 @@ export default function DashboardPage() {
                       <button className="btn-primary" onClick={createNewBook}>
                         ＋ Create New Book
                       </button>
-                      <div
-                      className="link-action"
-                      style={{ cursor: "pointer" }}
-                      onClick={() =>
-                        alert(
-                          "Importing an existing manuscript isn't built yet — start a new book with the wizard instead."
-                        )
-                      }
-                    >
+                      <div className="link-action" style={{ cursor: "pointer" }} onClick={() => router.push("/import")}>
                       ⇧ Import Manuscript
                     </div>
                     </div>

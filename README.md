@@ -876,6 +876,64 @@ only) all remain open — each needs either a real data source, a schema
 decision, or a browser-compatibility trade-off this pass didn't make
 unilaterally.
 
+## Research: Evidence & Sources architecture
+
+A follow-up spec asked for a "Deep Research & Web Agent" — live Amazon
+research, competitor/keyword/category tables, autonomous research jobs,
+research scoring. Checked the two load-bearing assumptions before writing
+anything:
+
+- **Amazon**: its Conditions of Use explicitly prohibit "the use of any
+  robot, spider, scraper, or other automated means to access Amazon
+  Services for any purpose" — regardless of whether the data is publicly
+  visible. The one legitimate path (the Product Advertising API) needs an
+  Associates account with qualifying sales, and even then restricts usage
+  to driving affiliate traffic, not general competitive research. No
+  automated Amazon access was built, full stop — same category of
+  decision as declining the ChatGPT-share-link importer earlier.
+- **General web search**: technically fine, legally fine, but there's no
+  search API configured in this deployment (no Bing/Brave/SerpApi key
+  anywhere), so nothing could be built that actually reaches the web
+  today without either fabricating results or lying about having checked.
+
+The existing `/api/research` route was audited against "does it fabricate
+live data" and came back clean — its system prompt already says "from
+general market knowledge (not live data)" and title-risk checks already
+refuse to claim legal clearance. Nothing needed correcting there.
+
+What got built is the **evidence infrastructure** that was actually
+missing, real and honest either way:
+
+- `competitor_research` / `keyword_research` / `category_research`
+  (`0016_research_evidence.sql`) — structured, per-row tables (not
+  freeform text) the author fills in themselves after actually looking at
+  real competing books, each row tagged `source_type`
+  (`user_provided`/`ai_inference`/`live_web`) and a qualitative
+  `confidence` (`low`/`medium`/`high`/`insufficient_data` — deliberately
+  never a fabricated 0-100 score, since there's no live signal today to
+  compute one from). `/research` now has an add/remove table for each.
+- `lib/web-research-client.ts` — a real Brave Search API adapter that
+  returns `{ available: false, reason: "..." }` right now because
+  `BRAVE_SEARCH_API_KEY` isn't set anywhere, rather than either throwing
+  or faking results. The moment that key exists, real results flow
+  through the same call site with no other code change. Brave specifically
+  because it's a plain paid REST API with no scraping/ToS ambiguity — not
+  Amazon-adjacent at all.
+- `lib/research-report.ts` / `/api/research/report` — generates a
+  research report strictly from what's actually in the database: the
+  competitor/keyword/category rows above, plus a live web check only when
+  available. The model is explicitly told never to invent a competitor,
+  review quote, or search-volume number, and to answer `insufficient_data`
+  honestly rather than a confident-sounding guess when little evidence
+  exists. Saved to `research_reports`, never overwriting a prior report.
+  `Accept` / `Research More` / `Reject` on each report, same "AI proposes,
+  human decides" pattern as everywhere else in the app.
+
+Not built this pass: autonomous background research jobs (section 17 of
+the spec) and the dashboard/navigation reorganization (sections 21-23) —
+both real, both bigger, both deliberately left for a separate pass rather
+than folded in here.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

@@ -23,6 +23,12 @@ export default function CoverDesignerPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [pageCount, setPageCount] = useState("");
+  const [paperType, setPaperType] = useState("white");
+  const [printCoverLoading, setPrintCoverLoading] = useState(false);
+  const [printCoverError, setPrintCoverError] = useState<string | null>(null);
+  const [printCoverResult, setPrintCoverResult] = useState<{ url: string; spine_width_in: number; full_wrap_width_in: number; full_wrap_height_in: number; spine_text_allowed: boolean } | null>(null);
+
   async function loadCover(projectId: string) {
     const { data } = await supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", projectId).maybeSingle();
     setConcepts((data?.concepts as CoverConcept[] | undefined) ?? []);
@@ -66,6 +72,28 @@ export default function CoverDesignerPage() {
     await loadCover(effectiveId);
   }
 
+  async function handleGeneratePrintCover(e: React.FormEvent) {
+    e.preventDefault();
+    if (!effectiveId) return;
+    setPrintCoverLoading(true);
+    setPrintCoverError(null);
+    setPrintCoverResult(null);
+    try {
+      const res = await fetch("/api/print-cover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: effectiveId, page_count: Number(pageCount), paper_type: paperType }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not generate the print cover.");
+      setPrintCoverResult(json);
+    } catch (err) {
+      setPrintCoverError(err instanceof Error ? err.message : "Could not generate the print cover.");
+    } finally {
+      setPrintCoverLoading(false);
+    }
+  }
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: sharedSecondaryCss }} />
@@ -107,6 +135,61 @@ export default function CoverDesignerPage() {
             <p className="hint" style={{ marginTop: "8px", fontSize: "11.5px" }}>
               An uploaded cover always takes priority in your exported manuscript over the generated concepts below.
             </p>
+          </div>
+        )}
+
+        {effectiveId && finalCoverRef && (
+          <div className="panel" style={{ marginBottom: "20px" }}>
+            <div style={{ fontWeight: 600, marginBottom: "10px" }}>Paperback Print Cover</div>
+            <p className="hint" style={{ marginBottom: "12px" }}>
+              Calculates the real spine width and full-wrap size from your exported manuscript&apos;s actual page
+              count, then places your ebook cover art into the front panel. InkFrame has no way to paginate a
+              manuscript itself — open your exported DOCX in Word or Google Docs and enter the page count it
+              shows you there, not an estimate.
+            </p>
+            <form onSubmit={handleGeneratePrintCover} style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Real page count (from Word)</label>
+                <input type="number" min={24} value={pageCount} onChange={(e) => setPageCount(e.target.value)} required style={{ width: "140px" }} />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Paper type</label>
+                <select value={paperType} onChange={(e) => setPaperType(e.target.value)}>
+                  <option value="white">White</option>
+                  <option value="cream">Cream</option>
+                  <option value="color">Standard/Premium Color</option>
+                </select>
+              </div>
+              <button className="btn btn-primary" type="submit" disabled={printCoverLoading}>
+                {printCoverLoading ? "Calculating…" : "Generate Print Cover"}
+              </button>
+            </form>
+            {printCoverError && <p style={{ color: "var(--redGlow)", fontSize: "13px", marginTop: "10px" }}>{printCoverError}</p>}
+            {printCoverResult && (
+              <div style={{ marginTop: "14px", fontSize: "13px" }}>
+                <div className="check-row">
+                  <span>Spine width</span>
+                  <span>{printCoverResult.spine_width_in}in</span>
+                </div>
+                <div className="check-row">
+                  <span>Full wrap size</span>
+                  <span>
+                    {printCoverResult.full_wrap_width_in}in × {printCoverResult.full_wrap_height_in}in
+                  </span>
+                </div>
+                <div className="check-row">
+                  <span>Spine text</span>
+                  <span>{printCoverResult.spine_text_allowed ? "Allowed" : "Too thin (under 100 pages)"}</span>
+                </div>
+                <a className="btn btn-secondary" style={{ display: "inline-block", marginTop: "10px" }} href={printCoverResult.url} target="_blank" rel="noreferrer">
+                  ⇩ Download Print Cover PDF
+                </a>
+                <p className="hint" style={{ marginTop: "8px" }}>
+                  The back cover and spine are a correctly-sized, labeled template — InkFrame doesn&apos;t have
+                  back-cover copy or separate spine art to generate, so it never fakes that part as done.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

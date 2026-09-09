@@ -934,6 +934,87 @@ the spec) and the dashboard/navigation reorganization (sections 21-23) —
 both real, both bigger, both deliberately left for a separate pass rather
 than folded in here.
 
+## Import Manuscript: closing the automatic-pipeline gap, and a real paperback print cover
+
+A follow-up spec asked for the existing "Import Manuscript" button to
+orchestrate a full pipeline — research, description, keywords,
+categories, cover, A+ Content, paperback/hardcover print covers,
+formatting, quality check, export — end to end, reusing existing systems
+rather than duplicating them. Audited what's actually already wired
+before adding anything:
+
+- **Already fully automatic today, zero changes needed**: `/api/import-manuscript`
+  creates the project with `status: 'GENERATING_COVER'` — the exact same
+  status the wizard leaves a project in once its blueprint is approved.
+  Since Cover, Metadata, Compliance, and Formatting Departments all pick
+  up work by `projects.status`, not by how the project was created, all
+  four already run automatically for an imported manuscript today,
+  identically to an AI-written book. This was true before this pass; it
+  just hadn't been said out loud.
+- **The one real gap in that "automatic pipeline"**: title-risk +
+  category research only ever auto-triggered from the New Book wizard,
+  never from Import. Fixed by extracting that check into
+  `lib/research-check.ts` (shared by `/api/research` and
+  `/api/import-manuscript`, rather than duplicating the prompt/tool
+  definition in two places) and calling it, best-effort, right after an
+  imported manuscript's chapters are saved.
+- **A+ Content**: does not exist anywhere in this codebase — no table, no
+  route, no UI. Not built this pass; it's a genuinely new system (content
+  generation + likely its own schema), not a "wire up the existing thing"
+  job, and deserves its own scoping rather than being folded in silently.
+- **Hardcover print cover**: not built — same spine-math shape as
+  paperback but with different, less standardized wrap/case allowances
+  per platform; deferred rather than guessed at.
+- **Series splitting on import**: still not built (flagged twice already
+  in this README) — creating genuinely separate per-book projects from one
+  import needs a schema/UX decision, not just more code.
+
+**Paperback print cover** (new): `cover_specs`/`format_editions` already
+had every column this needs (`trim_width`, `page_count`, `binding`,
+`bleed_required`, `calculated_spine_width`, `calculated_full_wrap_width`,
+`calculated_full_wrap_height`, `safe_area`) — the schema was designed for
+this and simply never had code behind it (`lib/cover-department.ts` had
+an explicit comment calling it out as unbuilt). What was missing:
+
+- `lib/print-cover.ts` — spine-width and full-wrap dimension math. Cross-
+  checked against multiple independent published breakdowns of Amazon
+  KDP's formula (`spine = page_count × paper_thickness + 0.06in`; white
+  paper 0.002252in/page, cream 0.0025in/page, color 0.002347in/page; full
+  wrap = `trim_width × 2 + spine + 0.25in bleed`) since KDP's own help
+  page is unreachable from this sandbox's network egress — not verified
+  against Amazon's primary documentation, so `PAPER_THICKNESS_IN` is one
+  place to correct if their real numbers ever differ. Verified the
+  200-page/white-paper case against the commonly-cited 0.5104in example
+  by hand.
+- **`page_count` is real user input, not computed** — this app has no PDF
+  renderer to actually paginate a manuscript (see "Why PDF isn't built
+  (yet)" above), and `format_editions.page_count`'s own schema comment
+  says it "must come from the final formatted manuscript, never
+  estimated". Estimating one from word count would violate that rule
+  outright, so the Cover Studio page (`/cover`) asks the author to type
+  in the real page count they see after opening their exported DOCX in
+  Word/Google Docs — real data InkFrame can't compute itself, not a guess.
+- `lib/print-cover-pdf.ts` (`pdf-lib`, pure JS/TS, no native rendering
+  dependency — chosen specifically because it's actually verifiable in
+  this sandbox, unlike full manuscript PDF layout) composites one PDF
+  page at the exact computed full-wrap size, with the real ebook cover
+  art placed into the front panel at true trim size. The back cover and
+  spine are rendered as a correctly-dimensioned, labeled template (fill +
+  safe-area guide + placeholder text), never faked as generated content —
+  there's no back-cover copy or separate spine art anywhere in this app
+  to draw from.
+- `/api/print-cover` creates/updates the `format_editions` (paperback) and
+  `cover_specs` rows with the real calculated values, uploads the PDF to
+  the existing private `exports` bucket, and serves it through the same
+  short-lived-signed-URL pattern as every other export in this app.
+- Verified: the spine-width formula by hand against a published example,
+  and the generated PDF by actually building one (a hand-constructed,
+  correctly-deflated 1x1 PNG fixture, since a memorized/hand-typed JPEG
+  fixture turned out to be invalid and pdf-lib correctly rejected it),
+  then re-parsing it and confirming the page's real width/height in
+  points matches the computed inch dimensions exactly (72pt/inch) — not
+  just "a PDF came out the other end."
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

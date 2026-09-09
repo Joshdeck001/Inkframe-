@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { withJsonErrors } from "@/lib/api-guard";
 import { wordCount } from "@/lib/manuscript-import";
+import { runTitleAndCategoryResearch } from "@/lib/research-check";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -124,6 +125,19 @@ export const POST = withJsonErrors(async (request: Request) => {
   if (chaptersError) {
     await supabase.from("projects").delete().eq("id", projectId);
     return NextResponse.json({ error: chaptersError.message }, { status: 500 });
+  }
+
+  // Best-effort, same reasoning as the trim_size write above: the manuscript
+  // is already safely saved, so a research hiccup must never fail the
+  // import. This is the same title-risk/category check the New Book wizard
+  // already runs automatically — imported books were the one path that
+  // never got it; Cover/Metadata/Compliance/Formatting already run
+  // automatically for any project via the status set above, same as an
+  // AI-written book.
+  try {
+    await runTitleAndCategoryResearch(supabase, projectId);
+  } catch {
+    // Swallowed on purpose — see comment above.
   }
 
   return NextResponse.json({ project_id: projectId, chapters: reviewedChapters.length, words: totalWords });

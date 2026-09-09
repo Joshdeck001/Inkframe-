@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BlueprintStructure } from "@/lib/blueprint-schema";
 import { getPausedProjectIds } from "@/lib/production-paused";
-import { generateText, modelUsedLabel } from "@/lib/ai-client";
+import { generateText, modelUsedLabel, resolvePreferredProvider } from "@/lib/ai-client";
 import { isStructuredBookType, getDesignFamily, writingGuidanceFor } from "@/lib/book-format";
 
 /**
@@ -65,10 +65,11 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     .eq("id", nextChapter.id);
   await supabase.from("projects").update({ status: "WRITING" }).eq("id", project.id);
 
-  const [{ data: identity }, { data: audience }, { data: style }] = await Promise.all([
+  const [{ data: identity }, { data: audience }, { data: style }, preferredProvider] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
     supabase.from("project_audience").select("*").eq("project_id", project.id).single(),
     supabase.from("project_style").select("*").eq("project_id", project.id).single(),
+    resolvePreferredProvider(supabase, project.id),
   ]);
 
   let previousChapterTail = "";
@@ -125,6 +126,7 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
         "restatement, no meta-commentary.",
     userContent: facts,
     maxTokens: 8000,
+    preferredProvider,
   });
 
   const chapterText = generated.text;

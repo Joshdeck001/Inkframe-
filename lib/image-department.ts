@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
-import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { generateImage } from "@/lib/image-client";
 
 const PLACEMENT_TOOL: ToolSpec = {
@@ -118,6 +118,7 @@ export async function runImageDepartmentTick(supabase: SupabaseClient): Promise<
       userContent: facts || "No chapters found.",
       tool: PLACEMENT_TOOL,
       maxTokens: 1500,
+      preferredProvider: await resolvePreferredProvider(supabase, project.id),
     });
 
     const chapterIdByNumber = new Map(chapterList.map((c) => [c.chapter_number, c.id]));

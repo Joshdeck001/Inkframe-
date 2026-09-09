@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
-import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { generateImage } from "@/lib/image-client";
 
 const COVER_TOOL: ToolSpec = {
@@ -93,6 +93,7 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
       userContent: facts,
       tool: COVER_TOOL,
       maxTokens: 1500,
+      preferredProvider: await resolvePreferredProvider(supabase, project.id),
     });
 
     const concepts: Concept[] = result.concepts.map((c) => ({

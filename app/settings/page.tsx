@@ -21,6 +21,8 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [preferredProvider, setPreferredProvider] = useState("auto");
+  const [savingProvider, setSavingProvider] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +35,9 @@ export default function SettingsPage() {
       setEmail(user.email ?? null);
       setFullName((user.user_metadata?.full_name as string | undefined) ?? "");
       setAvatarUrl((user.user_metadata?.avatar_url as string | undefined) ?? null);
+
+      const { data: profile } = await supabase.from("profiles").select("preferred_ai_provider").eq("id", user.id).single();
+      if (!cancelled && profile?.preferred_ai_provider) setPreferredProvider(profile.preferred_ai_provider);
     })();
     return () => {
       cancelled = true;
@@ -103,6 +108,17 @@ export default function SettingsPage() {
       setNewPassword("");
       setConfirmPassword("");
     }
+  }
+
+  async function handleSaveProviderPreference(next: string) {
+    setPreferredProvider(next);
+    setSavingProvider(true);
+    setError(null);
+    setMessage(null);
+    const { error } = await supabase.rpc("set_preferred_ai_provider", { new_provider: next });
+    setSavingProvider(false);
+    if (error) setError(error.message);
+    else setMessage("AI model preference saved.");
   }
 
   async function handleSignOut() {
@@ -195,6 +211,29 @@ export default function SettingsPage() {
               Change Password
             </button>
           </form>
+        </div>
+
+        <div className="panel">
+          <div style={{ fontWeight: 700, marginBottom: "14px" }}>AI Model Preference</div>
+          <div className="field">
+            <label>Preferred provider</label>
+            <select
+              value={preferredProvider}
+              onChange={(e) => handleSaveProviderPreference(e.target.value)}
+              disabled={savingProvider}
+            >
+              <option value="auto">Auto (recommended) — Anthropic, then OpenAI, then Gemini</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </div>
+          <p className="hint">
+            Every AI task in InkFrame (writing, quality scoring, cover concepts, metadata, research, translation,
+            advertising, the Copilot) tries your preferred provider first. If it fails or isn&apos;t configured
+            with an API key, InkFrame automatically falls back to the others — this only changes which one goes
+            first, it never removes the safety net.
+          </p>
         </div>
 
         <div className="panel">

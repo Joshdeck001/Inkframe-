@@ -7,6 +7,7 @@ import { runMetadataDepartmentTick } from "@/lib/metadata-department";
 import { runComplianceDepartmentTick } from "@/lib/compliance-department";
 import { runFormattingDepartmentTick } from "@/lib/formatting-department";
 import { runTranslationDepartmentTick } from "@/lib/translation-department";
+import { runAudiobookDepartmentTick } from "@/lib/audiobook-department";
 import { getPlanTier, maxPassesForTier, budgetMsForTier, type PlanTier } from "@/lib/plan-tier";
 
 export type DepartmentTick = (supabase: SupabaseClient) => Promise<{ processed: boolean; detail: string }>;
@@ -22,6 +23,7 @@ export const DEPARTMENTS: DepartmentEntry[] = [
   { name: "compliance-department", run: runComplianceDepartmentTick },
   { name: "formatting-department", run: runFormattingDepartmentTick },
   { name: "translation-department", run: runTranslationDepartmentTick },
+  { name: "audiobook-department", run: runAudiobookDepartmentTick },
 ];
 
 /**

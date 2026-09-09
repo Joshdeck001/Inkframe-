@@ -1,7 +1,7 @@
 import mammoth from "mammoth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, PageBreak } from "docx";
-import { generateText, modelUsedLabel, type TextResult } from "@/lib/ai-client";
+import { generateText, modelUsedLabel, resolvePreferredProviderForUser, type AiProvider, type TextResult } from "@/lib/ai-client";
 
 type TranslatedOutput = {
   language: string;
@@ -74,11 +74,18 @@ async function resolveSource(
   return null;
 }
 
-async function translateFrontMatter(language: string, title: string, subtitle: string, description: string) {
+async function translateFrontMatter(
+  language: string,
+  title: string,
+  subtitle: string,
+  description: string,
+  preferredProvider?: AiProvider
+) {
   const generated = await generateText({
     system: `Translate the following book title, subtitle, and description into ${language}. Preserve tone and marketability — this is not a literal word-for-word translation, it should read naturally to a native ${language} reader. Respond with exactly three lines: the translated title, then the translated subtitle (blank line if none), then the translated description.`,
     userContent: `Title: ${title}\nSubtitle: ${subtitle}\nDescription: ${description}`,
     maxTokens: 1500,
+    preferredProvider,
   });
   const [translatedTitle = title, translatedSubtitle = "", ...rest] = generated.text
     .split("\n")
@@ -91,11 +98,12 @@ async function translateFrontMatter(language: string, title: string, subtitle: s
   };
 }
 
-async function translateUnit(language: string, content: string): Promise<TextResult> {
+async function translateUnit(language: string, content: string, preferredProvider?: AiProvider): Promise<TextResult> {
   return generateText({
     system: `Translate the following book text into ${language}. Preserve meaning, tone, and paragraph structure — this is a professional literary translation, not a literal word-for-word conversion. Output ONLY the translated text.`,
     userContent: content,
     maxTokens: 8000,
+    preferredProvider,
   });
 }
 
@@ -169,6 +177,8 @@ export async function runTranslationDepartmentTick(supabase: SupabaseClient): Pr
     return { processed: true, detail: `Job ${job.id}: unsupported source (only existing projects and .docx uploads are translated so far), marked failed.` };
   }
 
+  const preferredProvider = await resolvePreferredProviderForUser(supabase, userId);
+
   const outputs: TranslatedOutput[] = job.translated_outputs ?? [];
   const nextLanguage = (job.target_languages as string[]).find(
     (lang) => !outputs.find((o) => o.language === lang && o.file_ref)
@@ -186,7 +196,7 @@ export async function runTranslationDepartmentTick(supabase: SupabaseClient): Pr
 
   let entry = outputs.find((o) => o.language === nextLanguage);
   if (!entry) {
-    const frontMatter = await translateFrontMatter(nextLanguage, source.title, source.subtitle, source.description);
+    const frontMatter = await translateFrontMatter(nextLanguage, source.title, source.subtitle, source.description, preferredProvider);
     modelUsedThisTick = modelUsedLabel(frontMatter.generated);
     entry = {
       language: nextLanguage,
@@ -218,7 +228,7 @@ export async function runTranslationDepartmentTick(supabase: SupabaseClient): Pr
     entry.word_count = wordCount;
   } else {
     const unit = source.units[entry._unitIndex!];
-    const translated = await translateUnit(nextLanguage, unit.content);
+    const translated = await translateUnit(nextLanguage, unit.content, preferredProvider);
     modelUsedThisTick = modelUsedLabel(translated);
     entry._unitTranslations = [...(entry._unitTranslations ?? []), translated.text];
     entry._unitIndex = entry._unitIndex! + 1;

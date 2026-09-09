@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleGenAI, Type as GeminiType, FunctionCallingConfigMode } from "@google/genai";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Three AI providers, tried in order, so one department's work never stops
@@ -254,16 +255,52 @@ const PROVIDERS: { name: AiProvider; envKey: string; model: string }[] = [
   { name: "gemini", envKey: "GEMINI_API_KEY", model: GEMINI_MODEL },
 ];
 
+/**
+ * A user's `profiles.preferred_ai_provider` (set via the Settings page,
+ * 'auto' by default) moves that provider to the front of the fallback
+ * chain for this call only — the rest of the chain still runs in its
+ * usual order if the preferred one fails or isn't configured. Returns
+ * PROVIDERS unchanged for 'auto' or an unrecognized/missing preference,
+ * which is exactly today's behavior.
+ */
+function orderedProviders(preferred?: AiProvider) {
+  if (!preferred) return PROVIDERS;
+  const first = PROVIDERS.filter((p) => p.name === preferred);
+  const rest = PROVIDERS.filter((p) => p.name !== preferred);
+  return [...first, ...rest];
+}
+
+/** Looks up a user's preferred_ai_provider directly. 'auto' (the default) returns undefined, same as no preference. */
+export async function resolvePreferredProviderForUser(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<AiProvider | undefined> {
+  const { data: profile } = await supabase.from("profiles").select("preferred_ai_provider").eq("id", userId).single();
+  const pref = profile?.preferred_ai_provider as AiProvider | "auto" | undefined;
+  return pref && pref !== "auto" ? pref : undefined;
+}
+
+/** Same as resolvePreferredProviderForUser, but from a project id — looks up the owning user first. */
+export async function resolvePreferredProvider(
+  supabase: SupabaseClient,
+  projectId: string
+): Promise<AiProvider | undefined> {
+  const { data: project } = await supabase.from("projects").select("user_id").eq("id", projectId).single();
+  if (!project) return undefined;
+  return resolvePreferredProviderForUser(supabase, project.user_id);
+}
+
 export async function generateStructured<T>(opts: {
   system: string;
   userContent: string;
   tool: ToolSpec;
   maxTokens?: number;
+  preferredProvider?: AiProvider;
 }): Promise<StructuredResult<T>> {
   const maxTokens = opts.maxTokens ?? 2000;
   const errors: string[] = [];
   const deadline = Date.now() + OVERALL_BUDGET_MS;
-  for (const p of PROVIDERS) {
+  for (const p of orderedProviders(opts.preferredProvider)) {
     if (!process.env[p.envKey]) continue;
     const timeLeft = deadline - Date.now();
     if (timeLeft < MIN_ATTEMPT_MS) {
@@ -288,11 +325,16 @@ export async function generateStructured<T>(opts: {
   throw new Error(`All configured AI providers failed — ${errors.join(" | ")}`);
 }
 
-export async function generateText(opts: { system: string; userContent: string; maxTokens?: number }): Promise<TextResult> {
+export async function generateText(opts: {
+  system: string;
+  userContent: string;
+  maxTokens?: number;
+  preferredProvider?: AiProvider;
+}): Promise<TextResult> {
   const maxTokens = opts.maxTokens ?? 8000;
   const errors: string[] = [];
   const deadline = Date.now() + OVERALL_BUDGET_MS;
-  for (const p of PROVIDERS) {
+  for (const p of orderedProviders(opts.preferredProvider)) {
     if (!process.env[p.envKey]) continue;
     const timeLeft = deadline - Date.now();
     if (timeLeft < MIN_ATTEMPT_MS) {

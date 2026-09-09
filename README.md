@@ -809,6 +809,73 @@ real, reusing the same visual language as the 8 approved pages
   Compliance Check, Settings, Help) were unreachable; scrolling just moved
   the whole page instead of the menu.
 
+## Book Passport, AI provider preference, Production Package, Audiobook Studio
+
+A "BookPilot" feature spec asked InkFrame to become a complete AI
+publishing OS across ~25 modules. A real audit against the existing
+codebase found that almost all of it already existed under different
+names — Departments instead of Agents, `story_bible`/`research_notes`
+instead of "project memory", the Anthropic→OpenAI→Gemini fallback chain
+in `lib/ai-client.ts` instead of a "model router", `publishing_jobs`'s
+`preparing → ready_for_review → ready_to_publish → user_marked_published`
+instead of "no autonomous publishing", and so on. Four genuine gaps got
+built:
+
+- **AI provider preference** (`profiles.preferred_ai_provider`,
+  `supabase.rpc('set_preferred_ai_provider', ...)`, a Settings page
+  control) — pins one provider to the front of the existing fallback chain
+  for that user's AI calls; the rest of the chain still runs if it fails
+  or isn't configured. Threaded through all 12 real call sites (every
+  Department, plus Research/Blueprint/Advertising/Copilot), not just
+  added to `lib/ai-client.ts` and left unwired.
+- **Book Passport** (`/passport?project=`, `lib/book-passport.ts`) — a
+  single read-only assembly of the canonical record that was always
+  spread across `project_identity`/`scope`/`audience`/`style`/`platform`,
+  `quality_gate`, `cover_department`, `metadata_department`,
+  `translation_jobs`, `format_editions`, `publishing_jobs`, and
+  `audiobook_jobs`. No new source of truth, no new schema — just one place
+  to see what stage every part of a book is in, with links out to each
+  studio to actually edit anything. Only surfaces what the schema actually
+  tracks (no "genre" or "target countries" field exists, so neither is
+  faked into the passport).
+- **Production Package** (`/api/production-package`, a button on
+  `/passport`) — bundles the completed manuscript (DOCX/EPUB from
+  `formatting_jobs`), cover, `metadata.json`/`description.txt`, and the
+  Book Passport itself as `project.json` into one zip (`jszip`), uploaded
+  to the private `exports` bucket and served via the same short-lived
+  signed-URL pattern as `/api/export-download` — never a raw binary
+  response. Returns a clear error instead of a package if formatting
+  hasn't completed yet; never ships a partial/fake bundle.
+- **Audiobook Studio** (`/audiobook?project=`, `lib/audiobook-department.ts`,
+  `lib/audio-client.ts`) — real narration via OpenAI's TTS endpoint (the
+  only configured provider with a text-to-speech API; Anthropic/Gemini
+  have none, so there's no fallback chain here). `audiobook_jobs` +
+  `audiobook_segments` (`0015_audiobook.sql`) mirror the existing
+  Department job-queue pattern, but production only ever starts when a
+  user explicitly calls `/api/audiobook/start` — never as part of the
+  automatic project pipeline, same as translation jobs. One chapter is
+  narrated per cron tick; a chapter's real TTS text is chunked at
+  paragraph boundaries to stay under OpenAI's per-request input cap and
+  the resulting MP3s are concatenated in order (verified: a hard-sliced
+  oversized paragraph reassembles to the exact original text). A failed
+  chapter is marked `failed` with the real error, never silently skipped.
+  The job only reaches `ready_for_review` once every chapter's been
+  attempted, and only reaches `complete` when the user explicitly clicks
+  "Mark Reviewed & Complete" after listening — the human-approval gate the
+  spec asked for, not an autonomous "done."
+
+Not built, and said so rather than guessed at: a ChatGPT-shared-link
+importer (`chatgpt.com/share/...`) was explicitly requested and explicitly
+declined — OpenAI's Terms of Use prohibit automated extraction from the
+Service by any method other than their API, and that restriction is about
+the method, not whether a given conversation is public. Series/multi-book
+auto-splitting into separate projects, royalty/sales reporting (no real
+sales-data source exists to connect), and a true always-on voice
+assistant beyond the existing Web Speech API integration (Chrome/Edge
+only) all remain open — each needs either a real data source, a schema
+decision, or a browser-compatibility trade-off this pass didn't make
+unilaterally.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

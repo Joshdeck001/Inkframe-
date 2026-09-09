@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
-import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { withJsonErrors } from "@/lib/api-guard";
 import { enforceChapterCount, type BlueprintStructure } from "@/lib/blueprint-schema";
 
@@ -115,6 +115,7 @@ export const POST = withJsonErrors(async (request: Request) => {
       userContent: promptFacts || "No details were provided beyond the book type.",
       tool: BLUEPRINT_TOOL,
       maxTokens: 8000,
+      preferredProvider: await resolvePreferredProvider(supabase, project_id),
     });
     structure = result.output;
     // The system prompt above tells the model the chapter count is a hard

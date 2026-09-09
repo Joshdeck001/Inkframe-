@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
-import { generateStructured, generateText, modelUsedLabel, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, generateText, modelUsedLabel, resolvePreferredProvider, type AiProvider, type ToolSpec } from "@/lib/ai-client";
 
 const QUALITY_DIMENSIONS = [
   "structure",
@@ -108,7 +108,8 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
     return { processed: false, detail: `Project ${project.id}: chapters still mid-revision.` };
   }
 
-  const score = await scoreChapter(chapter);
+  const preferredProvider = await resolvePreferredProvider(supabase, project.id);
+  const score = await scoreChapter(chapter, preferredProvider);
   const avg = average(score);
   const passed = avg >= REVISION_THRESHOLD && !score.needs_revision;
   const canRevise = chapter.revision_count < MAX_AUTO_REVISIONS;
@@ -116,7 +117,7 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
   if (!passed && canRevise) {
     await supabase.from("chapters").update({ status: "revising", quality_score: score }).eq("id", chapter.id);
 
-    const revised = await reviseChapter(chapter, score.issues);
+    const revised = await reviseChapter(chapter, score.issues, preferredProvider);
     const wordCount = revised.text.split(/\s+/).filter(Boolean).length;
 
     await supabase
@@ -144,7 +145,8 @@ export async function runQualityLoopTick(supabase: SupabaseClient): Promise<{
 }
 
 async function scoreChapter(
-  chapter: { chapter_number: number; title: string; objective: string; content: string }
+  chapter: { chapter_number: number; title: string; objective: string; content: string },
+  preferredProvider?: AiProvider
 ): Promise<QualityScore> {
   const { output } = await generateStructured<{ scores: Record<string, number>; needs_revision: boolean; issues: string[] }>({
     system:
@@ -154,13 +156,15 @@ async function scoreChapter(
     userContent: `Chapter ${chapter.chapter_number}: ${chapter.title}\nObjective: ${chapter.objective}\n\n${chapter.content}`,
     tool: SCORE_TOOL,
     maxTokens: 2000,
+    preferredProvider,
   });
   return { ...(output.scores as QualityScore), needs_revision: output.needs_revision, issues: output.issues };
 }
 
 async function reviseChapter(
   chapter: { chapter_number: number; title: string; objective: string; target_words: number; content: string },
-  issues: string[]
+  issues: string[],
+  preferredProvider?: AiProvider
 ) {
   return generateText({
     system:
@@ -172,5 +176,6 @@ async function reviseChapter(
       `Target length: about ${chapter.target_words} words\n\nIssues to fix:\n- ${issues.join("\n- ")}\n\n` +
       `Current chapter:\n${chapter.content}`,
     maxTokens: 8000,
+    preferredProvider,
   });
 }

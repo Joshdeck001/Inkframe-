@@ -506,6 +506,11 @@ function JobProgressBody() {
           <button className="btn btn-secondary" onClick={() => router.push("/dashboard")}>
             Back to Dashboard
           </button>
+          {project && (
+            <button className="btn btn-secondary" onClick={() => router.push(`/passport?project=${projectId}`)}>
+              🪪 Book Passport
+            </button>
+          )}
           {project && status !== "EXPORTED" && (
             <button className="btn btn-secondary" onClick={handleReopenBlueprint} disabled={reopening}>
               {reopening ? "Opening…" : "✎ Restructure This Book"}

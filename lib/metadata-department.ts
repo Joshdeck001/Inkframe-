@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
-import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 
 const METADATA_TOOL: ToolSpec = {
   name: "generate_metadata",
@@ -42,7 +42,7 @@ export async function runMetadataDepartmentTick(supabase: SupabaseClient): Promi
   if (projectQueryError) throw new Error(`Could not query projects: ${projectQueryError.message}`);
   if (!project) return { processed: false, detail: "No projects awaiting metadata generation." };
 
-  const [{ data: identity }, { data: audience }, { data: chapters }] = await Promise.all([
+  const [{ data: identity }, { data: audience }, { data: chapters }, preferredProvider] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
     supabase.from("project_audience").select("*").eq("project_id", project.id).single(),
     supabase
@@ -50,6 +50,7 @@ export async function runMetadataDepartmentTick(supabase: SupabaseClient): Promi
       .select("chapter_number, title, objective")
       .eq("project_id", project.id)
       .order("chapter_number", { ascending: true }),
+    resolvePreferredProvider(supabase, project.id),
   ]);
 
   const facts = [
@@ -82,6 +83,7 @@ export async function runMetadataDepartmentTick(supabase: SupabaseClient): Promi
     userContent: facts,
     tool: METADATA_TOOL,
     maxTokens: 2000,
+    preferredProvider,
   });
 
   const { error: upsertError } = await supabase

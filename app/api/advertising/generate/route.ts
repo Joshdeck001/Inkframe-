@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
-import { generateStructured, type ToolSpec } from "@/lib/ai-client";
+import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { withJsonErrors } from "@/lib/api-guard";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +98,7 @@ export const POST = withJsonErrors(async (request: Request) => {
       userContent: facts || "No metadata generated yet — use the title/subtitle only.",
       tool: STRATEGY_TOOL,
       maxTokens: 2500,
+      preferredProvider: await resolvePreferredProvider(supabase, project_id),
     });
     result = generated.output;
   } catch (e) {

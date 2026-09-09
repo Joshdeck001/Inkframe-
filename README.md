@@ -707,29 +707,64 @@ sandbox).
 ### Import your own manuscript, skip the writing cost entirely
 
 `/import` (linked from the dashboard's "Import Manuscript" action) lets an
-author who already wrote the book upload a `.docx` and have InkFrame format
-it — no Writing Agent, no Quality Loop, zero AI writing cost. It creates a
-project the same way the wizard does, but seeds `chapters` directly from
-the uploaded content instead of an AI blueprint, with every chapter marked
-`approved` immediately so the Quality Loop never touches (and never
-silently rewrites) the author's own words. Cover art, metadata, compliance
-checks, and formatting still run automatically afterward, same as any
-AI-written book.
+author who already wrote the book bring it into InkFrame and have it
+formatted — no Writing Agent, no Quality Loop, zero AI writing cost, and
+critically: **no rewriting**. Every chapter is created directly from the
+author's own text and marked `approved` immediately, so nothing downstream
+ever scores, rewrites, paraphrases, or "improves" it. Cover art, metadata,
+compliance checks, and formatting still run automatically afterward, same
+as any AI-written book.
 
-The uploaded document is converted (`lib/manuscript-import.ts`, `mammoth`)
-into the exact same lightweight-Markdown dialect the Writing Agent itself
-produces, so it flows through the identical, already-verified DOCX/EPUB
-rendering pipeline — bold/italic, sub-headings, and bullet/numbered lists
-all carry over, not just plain text. Chapter splitting looks for Word's
-built-in "Heading 1" paragraph style; a manuscript with no Heading 1s is
-imported as a single chapter rather than guessed at, since a wrong
-automatic split would scramble the author's own manuscript with no easy
-way to notice. Verified with a real generated `.docx` round-tripped through
-`mammoth` → the converter → the actual DOCX renderer → the strict OOXML
-schema checker, not just unit-tested in isolation. Only `.docx` is
-supported — that's the one format the chapter-splitting logic was actually
-built and verified against; PDF/plain-text input would need their own real
-verification, not an assumption this route makes.
+Import is now a two-step flow, `/api/import-manuscript/parse` then
+`/api/import-manuscript`, so the author reviews (and can reorder, rename,
+or remove) the detected chapters before a project is ever created — the
+"assembly, not rewriting" principle needs a review gate to be honest, not
+just a promise. Three sources are supported, all handled by
+`lib/manuscript-import.ts`:
+
+- **`.docx` upload** — converted via `mammoth`, chapters split on Word's
+  "Heading 1" paragraph style when present.
+- **`.txt` upload or pasted text** — no Word styles to lean on, so chapters
+  are found with a deterministic, pattern-based heading detector
+  (`detectChaptersFromPlainText`): "Chapter 1", "Chapter One", "CHAPTER 1",
+  "Ch. 4", "Chapter 12: Title", "Part One", and named front/back-matter
+  labels (Prologue, Epilogue, Foreword, etc.) on their own line. A `.docx`
+  with no Heading-1s now falls back to this same detector instead of
+  dumping the whole file into one chapter.
+- **ChatGPT `conversations.json` export** — the *official* OpenAI data
+  export (Settings → Data Controls → Export data in ChatGPT itself), never
+  a scrape of `chatgpt.com`: OpenAI's Terms of Use bar automated
+  extraction from the Service by any method other than their API, and that
+  restriction is about the method, not whether a conversation happens to be
+  shared/public, so InkFrame does not fetch or parse ChatGPT pages. The
+  export's own `mapping`/`current_node` branch structure is walked to
+  concatenate only the assistant's text along the *currently active*
+  branch — which already resolves a true edit/regenerate fork (a sibling
+  node OpenAI creates under the same parent) without any AI guessing. It
+  does **not** collapse a "write the chapter, then ask for a rewrite as a
+  follow-up message" pattern, since that's just two ordinary linear turns,
+  not a fork — both are detected, and `detectIssues`'s new
+  `multipleVersions` check flags any chapter number that turns up more
+  than once so the author picks which one to keep, rather than InkFrame
+  silently choosing.
+
+Nothing here calls an AI model — every split, number-parse, and
+duplicate/missing-chapter/multiple-version check is deterministic pattern
+matching over the source text, per the "extraction and organization, never
+rewriting" rule this feature exists to enforce. A content-integrity
+summary (source vs. assembled word/char counts) is shown on the review
+screen so any unexplained gap is visible rather than hidden. Verified with
+a real generated `.docx` round-tripped through `mammoth` → the converter →
+the actual DOCX renderer → the strict OOXML schema checker (unchanged from
+before), plus a script exercising the new plain-text detector, chapter
+numbering/gap/duplicate/multiple-version detection, and a synthetic
+ChatGPT export covering both a true branch fork and a linear rewrite
+follow-up — not just unit-tested in isolation.
+
+Not built (kept out rather than guessed at): automatic series/multi-book
+splitting into separate projects, and picking more than one conversation
+per import — a large export's conversation picker only lets you bring in
+one conversation at a time.
 
 ## Dashboard sidebar — every item now goes somewhere
 

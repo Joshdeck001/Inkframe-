@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import mammoth from "mammoth";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { withJsonErrors } from "@/lib/api-guard";
-import { splitIntoChapters, wordCount } from "@/lib/manuscript-import";
+import { wordCount } from "@/lib/manuscript-import";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_BYTES = 20 * 1024 * 1024;
 const BOOK_TYPES = [
   "Fiction",
   "Nonfiction",
@@ -22,70 +20,59 @@ const BOOK_TYPES = [
   "Other",
 ] as const;
 const TRIM_SIZES = ["5x8", "5.5x8.5", "6x9", "8.5x11"] as const;
+const MAX_CHAPTERS = 500;
 
 /**
- * "I already wrote this — just format it": creates a project from an
- * uploaded .docx and seeds its chapters directly from the real content,
- * skipping the Writing Agent and Quality Loop entirely (chapters go
- * straight to 'approved' — never handed to the AI to score or, worse,
- * silently rewrite). Cover/Metadata/Compliance/Formatting still run
- * normally afterward, same as any AI-written book, since those are
- * genuinely useful regardless of who wrote the words. Only .docx is
- * supported — that's the one format lib/manuscript-import.ts's Word
- * "Heading 1"-based chapter splitting was actually built and verified
- * against; a PDF/plain-text path would need its own real verification,
- * not a guess this route doesn't make.
+ * Step 2 of the import flow: takes the chapter list the author already
+ * reviewed/reordered/renamed on the client (parsed by
+ * /api/import-manuscript/parse, never re-derived here) and creates the
+ * project from it — skipping the Writing Agent and Quality Loop entirely,
+ * chapters go straight to 'approved' so nothing ever silently rewrites the
+ * author's own words. Cover/Metadata/Compliance/Formatting still run
+ * normally afterward, same as any AI-written book.
  */
 export const POST = withJsonErrors(async (request: Request) => {
   const supabase = await createClient();
   const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
   if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
-  const formData = await request.formData();
-  const file = formData.get("file");
-  const workingTitle = formData.get("title");
-  const subtitle = formData.get("subtitle");
-  const authorName = formData.get("author_name");
-  const bookType = formData.get("book_type");
-  const trimSize = formData.get("trim_size");
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  const { chapters, title, subtitle, author_name, book_type, trim_size } = body as Record<string, unknown>;
 
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "A .docx file is required." }, { status: 400 });
+  if (
+    !Array.isArray(chapters) ||
+    chapters.length === 0 ||
+    chapters.length > MAX_CHAPTERS ||
+    !chapters.every(
+      (c) =>
+        c &&
+        typeof c === "object" &&
+        typeof (c as Record<string, unknown>).title === "string" &&
+        typeof (c as Record<string, unknown>).content === "string" &&
+        (c as Record<string, unknown>).content
+    )
+  ) {
+    return NextResponse.json({ error: "At least one chapter with real content is required." }, { status: 400 });
   }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "File must be 20MB or smaller." }, { status: 400 });
-  }
-  if (typeof workingTitle !== "string" || !workingTitle.trim()) {
+  const reviewedChapters = chapters as { title: string; content: string }[];
+
+  if (typeof title !== "string" || !title.trim()) {
     return NextResponse.json({ error: "A working title is required." }, { status: 400 });
   }
-  if (typeof bookType !== "string" || !BOOK_TYPES.includes(bookType as (typeof BOOK_TYPES)[number])) {
+  if (typeof book_type !== "string" || !BOOK_TYPES.includes(book_type as (typeof BOOK_TYPES)[number])) {
     return NextResponse.json({ error: "A valid book type is required." }, { status: 400 });
   }
   const resolvedTrimSize =
-    typeof trimSize === "string" && TRIM_SIZES.includes(trimSize as (typeof TRIM_SIZES)[number]) ? trimSize : "6x9";
+    typeof trim_size === "string" && TRIM_SIZES.includes(trim_size as (typeof TRIM_SIZES)[number]) ? trim_size : "6x9";
 
-  let html: string;
-  try {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await mammoth.convertToHtml({ buffer });
-    html = result.value;
-  } catch (e) {
-    return NextResponse.json(
-      { error: `Could not read that file — is it a real .docx? (${e instanceof Error ? e.message : String(e)})` },
-      { status: 400 }
-    );
-  }
-
-  const chapters = splitIntoChapters(html, workingTitle.trim());
-  if (chapters.length === 0) {
-    return NextResponse.json({ error: "No readable text was found in that file." }, { status: 400 });
-  }
-
-  const totalWords = chapters.reduce((sum, c) => sum + wordCount(c.content), 0);
+  const totalWords = reviewedChapters.reduce((sum, c) => sum + wordCount(c.content), 0);
 
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .insert({ user_id: user.id, book_type: bookType, status: "GENERATING_COVER" })
+    .insert({ user_id: user.id, book_type, status: "GENERATING_COVER" })
     .select()
     .single();
   if (projectError || !project) {
@@ -96,15 +83,15 @@ export const POST = withJsonErrors(async (request: Request) => {
   const [identityRes, scopeRes] = await Promise.all([
     supabase.from("project_identity").insert({
       project_id: projectId,
-      working_title: workingTitle.trim(),
+      working_title: title.trim(),
       subtitle: typeof subtitle === "string" && subtitle.trim() ? subtitle.trim() : null,
-      author_name: typeof authorName === "string" && authorName.trim() ? authorName.trim() : null,
+      author_name: typeof author_name === "string" && author_name.trim() ? author_name.trim() : null,
       language: "English",
     }),
     supabase.from("project_scope").insert({
       project_id: projectId,
       target_word_count: totalWords,
-      estimated_chapter_count: chapters.length,
+      estimated_chapter_count: reviewedChapters.length,
       words_written: totalWords,
     }),
   ]);
@@ -122,7 +109,7 @@ export const POST = withJsonErrors(async (request: Request) => {
   await supabase.from("project_scope").update({ trim_size: resolvedTrimSize }).eq("project_id", projectId);
 
   const { error: chaptersError } = await supabase.from("chapters").insert(
-    chapters.map((c, i) => ({
+    reviewedChapters.map((c, i) => ({
       project_id: projectId,
       chapter_number: i + 1,
       title: c.title,
@@ -139,5 +126,5 @@ export const POST = withJsonErrors(async (request: Request) => {
     return NextResponse.json({ error: chaptersError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ project_id: projectId, chapters: chapters.length, words: totalWords });
+  return NextResponse.json({ project_id: projectId, chapters: reviewedChapters.length, words: totalWords });
 });

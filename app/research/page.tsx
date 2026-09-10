@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { sharedSecondaryCss } from "@/content/shared-secondary.css";
 import { useMyProjects } from "@/lib/useMyProjects";
@@ -1772,10 +1772,16 @@ function ProjectResearch() {
 // Page
 // ---------------------------------------------------------------------------
 
-export default function ResearchPage() {
+function ResearchPageInner() {
   const router = useRouter();
-  const [view, setView] = useState<"overview" | "new" | "session">("overview");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // Deep link from the Suggestion Bar's "Open in Research" (?session=<id>) — opens
+  // straight into that session instead of leaving the user to find it in the list.
+  // Read directly as the initial state (same pattern as job-progress's ?project=),
+  // not copied via a useEffect, so there's no extra render or setState-in-effect.
+  const searchParams = useSearchParams();
+  const initialSession = searchParams.get("session");
+  const [view, setView] = useState<"overview" | "new" | "session">(initialSession ? "session" : "overview");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSession);
   const [showProjectResearch, setShowProjectResearch] = useState(false);
 
   return (
@@ -1829,5 +1835,13 @@ export default function ResearchPage() {
         {view === "session" && activeSessionId && <SessionDetail sessionId={activeSessionId} onBack={() => setView("overview")} />}
       </div>
     </>
+  );
+}
+
+export default function ResearchPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResearchPageInner />
+    </Suspense>
   );
 }

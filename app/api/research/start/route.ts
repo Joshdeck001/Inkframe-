@@ -2,15 +2,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { withJsonErrors } from "@/lib/api-guard";
+import { RESEARCH_MODES, RESEARCH_PLATFORMS } from "@/lib/research-agent";
 
 export const dynamic = "force-dynamic";
 
-const MODES = [
-  "book_opportunity", "keyword_research", "competition_analysis", "market_research",
-  "topic_research", "series_research", "metadata_research", "trend_research",
-  "full_publishing_research",
-];
-const PLATFORMS = ["amazon", "google_play", "kobo", "web"];
+const MODES: readonly string[] = RESEARCH_MODES;
+const PLATFORMS: readonly string[] = RESEARCH_PLATFORMS;
 
 /**
  * The explicit human-approval gate for background Deep Research (same

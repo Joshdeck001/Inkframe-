@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title } from "@/content/dashboard";
 import { copilotCss } from "@/content/dashboard-copilot.css";
+import { STAGE_ORDER, type Stage } from "@/lib/research-department";
+import type { ResearchReportSections } from "@/lib/research-report";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +22,142 @@ type ProjectRow = {
   } | null;
 };
 
+type SuggestionSession = { id: string; topic: string; mode: string; stages: Stage[]; status: string; error: string | null };
+type SavedReportLike = { overall_assessment: string; confidence_level: string; evidence_summary: string; sections: ResearchReportSections };
+const SUGGESTION_MODE_LABEL: Record<string, string> = {
+  book_opportunity: "Book Opportunity",
+  keyword_research: "Keyword Research",
+  competition_analysis: "Competitor Research",
+  market_research: "Market Research",
+  topic_research: "Topic Research",
+  series_research: "Series/Author Research",
+  metadata_research: "Metadata Research",
+  trend_research: "Trend Research",
+  full_publishing_research: "Full Publishing Research",
+};
+
 /** The chosen cover if one was picked, else the first real generated concept — same fallback the Formatting Department itself uses when it embeds a cover. */
 function coverThumbUrl(p: ProjectRow): string | null {
   const cover = p.cover_department;
   if (!cover) return null;
   if (cover.final_cover_ref) return cover.final_cover_ref;
   return cover.concepts?.find((c) => c.status === "generated" && c.image_ref)?.image_ref ?? null;
+}
+
+const SUGGESTION_SECTION_ORDER: (keyof ResearchReportSections)[] = ["executive_summary", "opportunities", "recommended_angle", "next_actions"];
+const SUGGESTION_SECTION_LABEL: Record<string, string> = {
+  executive_summary: "Executive Summary",
+  opportunities: "Opportunities",
+  recommended_angle: "Recommended Angle",
+  next_actions: "Next Actions",
+};
+
+/**
+ * The Suggestion Bar's result panel — a status checklist while the
+ * session's real stages advance, then a teaser of the real generated
+ * report (never a duplicate of Research's own full report view, which
+ * "Open in Research" links straight into). See lib/research-department.ts
+ * for the same stage list every other research session already uses.
+ */
+function SuggestionBarResults({
+  session,
+  report,
+  error,
+  onDismiss,
+  onOpenInResearch,
+  onFollowUp,
+}: {
+  session: SuggestionSession;
+  report: SavedReportLike | null;
+  error: string | null;
+  onDismiss: () => void;
+  onOpenInResearch: () => void;
+  onFollowUp: (text: string) => void;
+}) {
+  const [followUpText, setFollowUpText] = useState("");
+  const failed = session.status === "needs_attention" || session.status === "failed";
+
+  return (
+    <div className="panel" style={{ marginBottom: "20px" }}>
+      <div className="panel-head">
+        <h3>🔎 {session.topic}</h3>
+        <span className="view-all" style={{ cursor: "pointer" }} onClick={onDismiss}>✕ Dismiss</span>
+      </div>
+      <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "14px" }}>
+        {SUGGESTION_MODE_LABEL[session.mode] ?? session.mode} · reuses the same research pipeline as Research → New Research
+      </div>
+
+      {error && <p style={{ color: "var(--redGlow)", fontSize: "13px", marginBottom: "12px" }}>{error}</p>}
+
+      {!report && !failed && (
+        <div style={{ marginBottom: "14px" }}>
+          {STAGE_ORDER.map((s) => {
+            const found = session.stages.find((st) => st.key === s.key);
+            const status = found?.status ?? "pending";
+            const icon = status === "passed" ? "✓" : status === "failed" ? "✕" : status === "blocked" ? "⏸" : "…";
+            return (
+              <div key={s.key} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: "12.5px", color: status === "passed" ? "#5fe3b8" : "var(--muted)" }}>
+                <span>{s.label}</span>
+                <span>{icon}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {failed && (
+        <p style={{ fontSize: "13px", color: "var(--redGlow)", marginBottom: "12px" }}>
+          Research hit a real error and stopped — {session.error || "see the session in Research for details"}.
+        </p>
+      )}
+
+      {report && (
+        <div style={{ marginBottom: "14px" }}>
+          <div style={{ display: "flex", gap: "10px", marginBottom: "10px", fontSize: "12px", color: "var(--muted)" }}>
+            <span>Assessment: {report.overall_assessment.replace(/_/g, " ")}</span>
+            <span>· Confidence: {report.confidence_level.replace(/_/g, " ")}</span>
+          </div>
+          {SUGGESTION_SECTION_ORDER.map((key) => (
+            <div key={key} style={{ marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>{SUGGESTION_SECTION_LABEL[key]}</div>
+              <p style={{ fontSize: "13px", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{report.sections[key]}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: report ? "14px" : "0" }}>
+        <button className="btn-primary" onClick={onOpenInResearch}>
+          Open Full Report in Research
+        </button>
+      </div>
+
+      {report && (
+        <div style={{ marginTop: "14px", borderTop: "1px solid var(--border)", paddingTop: "14px" }}>
+          <div style={{ fontSize: "12.5px", marginBottom: "8px", color: "var(--muted)" }}>Ask a follow-up — added as a note, then opens in Research to continue:</div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <input
+              type="text"
+              value={followUpText}
+              onChange={(e) => setFollowUpText(e.target.value)}
+              placeholder="e.g. Now focus on seniors…"
+              style={{ flex: 1, background: "var(--panel2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "8px 10px", color: "var(--ink)", fontSize: "13px" }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && followUpText.trim()) onFollowUp(followUpText.trim());
+              }}
+            />
+            <button
+              className="open-btn"
+              style={{ width: "auto", padding: "8px 14px" }}
+              onClick={() => followUpText.trim() && onFollowUp(followUpText.trim())}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -115,6 +247,10 @@ export default function DashboardPage() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [suggestionSession, setSuggestionSession] = useState<SuggestionSession | null>(null);
+  const [suggestionReport, setSuggestionReport] = useState<SavedReportLike | null>(null);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = title;
@@ -299,6 +435,70 @@ export default function DashboardPage() {
       router.push(`/job-progress?project=${id}`);
     }
   }
+
+  // Suggestion Bar (see "Suggestion Bar" in README.md): the existing "Search your books"
+  // box doubles as a natural-language research entry point. Typing still filters
+  // visibleProjects live, unchanged; pressing Enter on a longer query additionally asks
+  // the server whether it's a real research question — most short phrases (a book title)
+  // come back `handled: false` and nothing else happens, since the local filter already
+  // shows the match. Reuses the exact same research_sessions pipeline /research's "New
+  // Research" already uses; this is not a second research engine.
+  async function submitSuggestionQuery() {
+    const q = searchQuery.trim();
+    if (q.length < 4 || suggestionLoading) return;
+    setSuggestionLoading(true);
+    setSuggestionError(null);
+    setSuggestionReport(null);
+    try {
+      const res = await fetch("/api/suggestion-bar/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not process that request.");
+      if (!json.handled) {
+        setSuggestionSession(null);
+        return;
+      }
+      setSuggestionSession({ id: json.session_id, topic: json.topic, mode: json.mode, stages: [], status: "running", error: null });
+    } catch (e) {
+      setSuggestionError(e instanceof Error ? e.message : "Could not process that request.");
+    } finally {
+      setSuggestionLoading(false);
+    }
+  }
+
+  async function addSuggestionFollowUp(sessionId: string, text: string) {
+    if (!text.trim()) return;
+    await supabase.from("research_notes").insert({ session_id: sessionId, research_type: "user_note", content: text.trim(), source_type: "user_provided" });
+    router.push(`/research?session=${sessionId}`);
+  }
+
+  useEffect(() => {
+    if (!suggestionSession || suggestionSession.status === "completed" || suggestionSession.status === "needs_attention" || suggestionSession.status === "failed") return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      const { data } = await supabase.from("research_sessions").select("status, stages, error").eq("id", suggestionSession.id).maybeSingle();
+      if (!data || cancelled) return;
+      setSuggestionSession((s) => (s ? { ...s, status: data.status, stages: (data.stages as Stage[]) ?? [], error: data.error } : s));
+      if (data.status === "completed") {
+        const { data: report } = await supabase
+          .from("research_reports")
+          .select("overall_assessment, confidence_level, evidence_summary, sections")
+          .eq("session_id", suggestionSession.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!cancelled && report) setSuggestionReport(report as SavedReportLike);
+      }
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionSession?.id, suggestionSession?.status]);
 
   const active = projects?.find((p) => p.status !== "EXPORTED") ?? null;
 
@@ -606,15 +806,21 @@ export default function DashboardPage() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search your books..."
+                placeholder="Search your books, or ask Inkframe anything…"
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     setSearchQuery("");
+                    setSuggestionSession(null);
+                    setSuggestionReport(null);
+                    setSuggestionError(null);
                     searchInputRef.current?.blur();
+                  } else if (e.key === "Enter") {
+                    submitSuggestionQuery();
                   }
                 }}
               />
-              {!searchQuery && <kbd>⌘K</kbd>}
+              {suggestionLoading && <span style={{ fontSize: "11px", color: "var(--muted)" }}>Thinking…</span>}
+              {!searchQuery && !suggestionLoading && <kbd>⌘K</kbd>}
             </div>
             <div className="top-right">
               <div className="bell" style={{ cursor: "pointer" }} onClick={() => setBellOpen((v) => !v)}>
@@ -716,6 +922,21 @@ export default function DashboardPage() {
           </header>
 
           <div className="content">
+            {suggestionSession && (
+              <SuggestionBarResults
+                session={suggestionSession}
+                report={suggestionReport}
+                error={suggestionError}
+                onDismiss={() => {
+                  setSuggestionSession(null);
+                  setSuggestionReport(null);
+                  setSuggestionError(null);
+                  setSearchQuery("");
+                }}
+                onOpenInResearch={() => router.push(`/research?session=${suggestionSession.id}`)}
+                onFollowUp={(text) => addSuggestionFollowUp(suggestionSession.id, text)}
+              />
+            )}
             <div className="grid-3">
               <div>
                 <div className="hero-card">

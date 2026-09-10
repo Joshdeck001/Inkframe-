@@ -29,6 +29,26 @@ export type ResearchSession = {
   project_id: string | null;
 };
 
+// The single source of truth for research_sessions.mode/platforms — every
+// caller that creates a session (the form at /api/research/start, and the
+// Suggestion Bar's natural-language classifier in lib/suggestion-intent.ts)
+// imports these rather than keeping its own copy.
+export const RESEARCH_MODES = [
+  "book_opportunity",
+  "keyword_research",
+  "competition_analysis",
+  "market_research",
+  "topic_research",
+  "series_research",
+  "metadata_research",
+  "trend_research",
+  "full_publishing_research",
+] as const;
+export type ResearchMode = (typeof RESEARCH_MODES)[number];
+
+export const RESEARCH_PLATFORMS = ["amazon", "google_play", "kobo", "web"] as const;
+export type ResearchPlatform = (typeof RESEARCH_PLATFORMS)[number];
+
 // ---------------------------------------------------------------------------
 // Stage 1: discovery — real web search, honestly reporting unavailability.
 // ---------------------------------------------------------------------------

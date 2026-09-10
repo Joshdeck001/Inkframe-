@@ -2268,6 +2268,115 @@ same clip's data changes. Live end-to-end testing against real Amazon/
 Google Play Books/Kobo pages still requires a real browser session and a
 live Supabase project, neither available in this sandboxed environment.
 
+## Suggestion Bar
+
+The dashboard's topbar search box ("Search your books...", the one with
+the ⌘K hint) is now also a natural-language entry point into Research —
+not a second chatbot, not a new page. Per the spec's own audit-first
+instruction: before writing anything, the existing box was found to be
+a real, working local filter over `visibleProjects` (`app/dashboard/
+page.tsx`) with no backend at all — that behavior is completely
+unchanged. What's new only fires on **Enter**, and only for a query
+that reads as an actual question.
+
+**Architecture — almost entirely reuse, one new front door:**
+
+```
+Suggestion Bar (existing search input)
+        ↓
+lib/suggestion-intent.ts — classifySuggestionQuery()  ← the one new piece
+        ↓ (real AI tool call, same generateStructured/provider-fallback
+        ↓  chain as every other AI call in this app)
+research_sessions row  ← the exact same table/shape /api/research/start
+        ↓                  already creates from the New Research form
+lib/research-agent.ts's six-stage pipeline  ← already existed, unchanged
+        ↓
+research_reports  ← already existed, unchanged
+```
+
+- **Intent classification** (`lib/suggestion-intent.ts`) maps free text
+  onto `research_sessions.mode`'s own existing 9-value enum (now
+  exported as `RESEARCH_MODES` from `lib/research-agent.ts`, imported by
+  both `/api/research/start` and the classifier — no second copy of the
+  taxonomy) — never a new, parallel intent system. A short, book-title-
+  shaped phrase (the overwhelmingly common case for a "search your
+  books" box) is explicitly instructed to classify as *not* a research
+  question, so typing an actual book title still just filters
+  `visibleProjects` exactly as before — nothing new ever fires.
+- **`POST /api/suggestion-bar/query`** (new) does the classification,
+  and — only when it's a real research question — creates a
+  `research_sessions` row and runs its first stage (`discovery`, a real
+  web search via the already-existing `lib/web-research-client.ts`)
+  synchronously, so the Suggestion Bar shows real progress immediately
+  instead of only "queued, check back later." Every stage after that
+  advances through the exact same background department tick
+  (`lib/research-department.ts` → `/api/cron/research-department`)
+  every other research session already uses — not a second job system.
+- **The result panel** (dashboard-embedded, `SuggestionBarResults`)
+  shows the session's real `stages` array while it runs, then a teaser
+  of the real generated report (executive summary, opportunities,
+  recommended angle, next actions) once complete, with **Open Full
+  Report in Research** — `/research` now supports `?session=<id>` to
+  deep-link straight into that session's existing full view (evidence
+  tables, complete 25-section report, notes, concepts, Create Book
+  Project), rather than duplicating that UI on the dashboard.
+- **Follow-ups** are scoped honestly: typing a refinement in the result
+  panel adds it as a real `research_notes` row (`source_type:
+  'user_provided'`) on the same session, then opens it in Research to
+  continue — not a live conversational re-planning engine, which would
+  be substantial new infrastructure on its own.
+- **InkframeScout evidence combination already works, for free**: a
+  clip the user assigns from Research's "My Clips" panel into a session
+  lands in the exact same `competitor_research` table (tagged
+  `source_type: 'browser_clip'`) the analysis stage already reads — so a
+  Suggestion-Bar-started session that later gets Scout evidence assigned
+  to it genuinely combines web research with real captured marketplace
+  evidence, with zero new code for that specific combination.
+- **Fact vs. inference**: reuses `lib/research-evidence-labels.ts`'s
+  existing OBSERVED/CALCULATED/INFERRED/RECOMMENDED/USER INPUT/UNKNOWN
+  vocabulary unchanged — no new classification scheme.
+
+**Declined/deferred, stated plainly:**
+
+- **URL paste ingestion** — fetching an arbitrary user-pasted URL
+  server-side is a real SSRF surface (the spec's own section 41 flags
+  exactly this) that needs deliberate validation infrastructure this
+  round didn't build. Not implemented.
+- **Uploaded-file combination** — would duplicate Import Manuscript's
+  own upload plumbing rather than reuse it cleanly; deferred.
+- **Quick/Standard/Deep research tiers** — one behavior only (create a
+  session, run discovery inline, let the background tick handle the
+  rest.) A tiering system is real added complexity with no existing
+  infrastructure to reuse; not built speculatively.
+- **A new caching layer** — no evidence yet that repeated identical
+  queries are common enough to justify the staleness tradeoffs a cache
+  would introduce; not built.
+- **Trend timelines with dated signal history** — the underlying report
+  sections (`trend_signals`, etc.) are real, but a dedicated
+  month-by-month timeline view wasn't built this round.
+
+**Verified:** `tsc --noEmit`, `eslint` (zero new errors), a full
+production build, and a real runtime test of the shared schema between
+the classifier and the background pipeline (`RESEARCH_MODES`/
+`RESEARCH_PLATFORMS`/`STAGE_ORDER`/`initStages()`) — which caught a real
+bug during implementation: the classifier's tool schema initially put a
+literal `null` inside a JSON Schema `enum` array (invalid — nullability
+belongs in `type: ["string", "null"]`, not the enum list), caught by
+`tsc` against this app's own `ToolSpec`/`JsonSchema` types before it
+ever reached a live AI call.
+
+**Live testing** (same caveat as the rest of this README's live-testing
+sections — no live Supabase project or browser session exists in this
+sandboxed environment, so this wasn't run end-to-end here): after
+migrations are applied, sign in, go to the dashboard, type a real
+research question (e.g. "What's trending in AI productivity books?")
+into the search bar, and press Enter. Confirm: the result panel appears
+and shows real stage progress; once complete, a real report teaser
+renders; **Open Full Report in Research** opens `/research?session=...`
+directly into that session; adding a follow-up creates a real
+`research_notes` row visible there. Typing an ordinary book title
+instead should do nothing but filter the book list, exactly as before.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

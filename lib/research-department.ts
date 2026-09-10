@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runDiscoveryStage, runExtractionStage, runAnalysisStage, runConceptsStage, runReportStage, type ResearchSession } from "@/lib/research-agent";
 
-type Stage = { key: string; label: string; status: "pending" | "passed" | "blocked" | "failed"; detail: string };
+export type Stage = { key: string; label: string; status: "pending" | "passed" | "blocked" | "failed"; detail: string };
 
-const STAGE_ORDER: { key: string; label: string }[] = [
+export const STAGE_ORDER: { key: string; label: string }[] = [
   { key: "discovery", label: "Search Discovery" },
   { key: "extraction", label: "Competitor & Keyword Collection" },
   { key: "analysis", label: "Keyword & Gap Analysis" },
@@ -12,7 +12,7 @@ const STAGE_ORDER: { key: string; label: string }[] = [
   { key: "finalize", label: "Finalize" },
 ];
 
-function initStages(): Stage[] {
+export function initStages(): Stage[] {
   return STAGE_ORDER.map((s) => ({ key: s.key, label: s.label, status: "pending", detail: "" }));
 }
 

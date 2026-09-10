@@ -1,15 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title as pageTitle } from "@/content/publish";
 import { assembleBookPassport, computeBookHealth, type BookPassport } from "@/lib/book-passport";
+import { runPreflight, suggestPrice, ALL_FORMATS, type FormatType, type PreflightResult } from "@/lib/kdp-preparation";
 
 export const dynamic = "force-dynamic";
 
 type Platform = "Amazon KDP" | "Kobo" | "Google Play Books" | "Apple Books";
-type FormatType = "ebook" | "paperback" | "hardcover";
 const FORMAT_LABELS: Record<FormatType, string> = { ebook: "Kindle eBook", paperback: "Paperback", hardcover: "Hardcover" };
 
 type RightsBasis = "original" | "public_domain" | "licensed" | "other";
@@ -36,13 +36,31 @@ const PLATFORM_ICONS: Record<Platform, string> = {
   "Apple Books": "📕",
 };
 
-// A starting suggestion only — InkFrame may suggest a price, never auto-sets one.
-function suggestPrice(totalWords: number): string {
-  if (totalWords < 20000) return "2.99";
-  if (totalWords < 50000) return "3.99";
-  if (totalWords < 90000) return "4.99";
-  return "5.99";
-}
+type JobStage = { key: string; label: string; status: "pending" | "passed" | "blocked" | "failed"; detail: string };
+type JobBlocker = { label: string; route: string };
+type PreparedFields = { title: string; description: string; keywords: string; category: string; price: string };
+type JobStatus =
+  | "preparing"
+  | "ready_for_review"
+  | "ready_to_publish"
+  | "user_marked_published"
+  | "queued"
+  | "running"
+  | "needs_attention"
+  | "failed"
+  | "cancelled";
+type PublishingJobRow = {
+  id: string;
+  status: JobStatus;
+  requested_formats: FormatType[];
+  stages: JobStage[];
+  blockers: JobBlocker[];
+  package_ref: string | null;
+  prepared_fields: PreparedFields | null;
+  error: string | null;
+  prepared_at: string | null;
+};
+const ACTIVE_STATUSES: JobStatus[] = ["queued", "running"];
 
 function CheckRow({ label, ok, text }: { label: string; ok: boolean | null; text: string }) {
   return (
@@ -55,13 +73,24 @@ function CheckRow({ label, ok, text }: { label: string; ok: boolean | null; text
   );
 }
 
+function stageStatusColor(status: JobStage["status"]) {
+  if (status === "passed") return "#5fe3b8";
+  if (status === "failed" || status === "blocked") return "var(--red)";
+  return "var(--muted)";
+}
+function stageStatusText(status: JobStage["status"]) {
+  if (status === "passed") return "✓ done";
+  if (status === "failed") return "✗ failed";
+  if (status === "blocked") return "⚠ blocked";
+  return "…pending";
+}
+
 function PublishBody() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = searchParams.get("project");
   const supabase = createClient();
 
-  const [projectStatus, setProjectStatus] = useState<string | null>(null);
   const [passport, setPassport] = useState<BookPassport | null>(null);
   const [loading, setLoading] = useState(!!projectId);
   const [approved, setApproved] = useState(false);
@@ -75,19 +104,14 @@ function PublishBody() {
   const declarationsSkipAutosave = useRef(true);
 
   const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
-  const [preparing, setPreparing] = useState(false);
+  const [selectedFormats, setSelectedFormats] = useState<FormatType[]>(["ebook", "paperback", "hardcover"]);
+  const [job, setJob] = useState<PublishingJobRow | null>(null);
+  const [startingJob, setStartingJob] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
-  const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
-  const [preparedFields, setPreparedFields] = useState<{
-    title: string;
-    description: string;
-    keywords: string;
-    category: string;
-    price: string;
-  } | null>(null);
+  const [preflightMessage, setPreflightMessage] = useState<string | null>(null);
+  const [downloadingPackage, setDownloadingPackage] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [markingPublished, setMarkingPublished] = useState(false);
-  const [published, setPublished] = useState(false);
 
   useEffect(() => {
     document.title = pageTitle;
@@ -108,7 +132,6 @@ function PublishBody() {
       ]);
       if (cancelled || !result) return;
       setPassport(result);
-      setProjectStatus(result.workflowStage);
       priceSkipAutosave.current = true;
       const priceByFormat: Record<FormatType, string> = { ebook: "", paperback: "", hardcover: "" };
       for (const e of editions ?? []) {
@@ -130,7 +153,6 @@ function PublishBody() {
           : EMPTY_DECLARATIONS
       );
       setApproved(["USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(result.workflowStage));
-      setPublished(result.workflowStage === "EXPORTED");
       setLoading(false);
     })();
     return () => {
@@ -141,7 +163,7 @@ function PublishBody() {
 
   // Real per-format pricing, debounced-autosaved to format_editions — never
   // silently overwritten by a suggestion once the author has set a real
-  // value (see suggestPrice below, only used as a fallback display).
+  // value (see suggestPrice, only ever used as a fallback display).
   useEffect(() => {
     if (!projectId) return;
     if (priceSkipAutosave.current) {
@@ -189,6 +211,56 @@ function PublishBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [declarations, projectId]);
 
+  async function fetchJob(platform: Platform): Promise<PublishingJobRow | null> {
+    if (!projectId) return null;
+    const { data } = await supabase
+      .from("publishing_jobs")
+      .select("id, status, requested_formats, stages, blockers, package_ref, prepared_fields, error, prepared_at")
+      .eq("project_id", projectId)
+      .eq("target_platform", platform)
+      .maybeSingle();
+    return (data as PublishingJobRow | null) ?? null;
+  }
+
+  // Selecting a platform loads its existing publishing_jobs row (if any) —
+  // the ONE record of this project's preparation for that platform,
+  // whatever stage it's at (never a fresh parallel state).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!projectId || !selectedPlatform) {
+        if (!cancelled) setJob(null);
+        return;
+      }
+      const data = await fetchJob(selectedPlatform);
+      if (cancelled) return;
+      setJob(data);
+      if (data?.requested_formats?.length) setSelectedFormats(data.requested_formats);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, selectedPlatform]);
+
+  // While the background job is active, poll for progress — the job keeps
+  // running server-side (lib/kdp-preparation-department.ts, via cron)
+  // whether or not this tab stays open; this just reflects its state.
+  useEffect(() => {
+    if (!job || !selectedPlatform || !ACTIVE_STATUSES.includes(job.status)) return;
+    const interval = setInterval(async () => {
+      const data = await fetchJob(selectedPlatform);
+      setJob(data);
+    }, 4000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.status, selectedPlatform]);
+
+  const livePreflight: PreflightResult | null = useMemo(
+    () => (passport ? runPreflight(passport, selectedFormats, prices) : null),
+    [passport, selectedFormats, prices]
+  );
+
   async function handleApprove() {
     if (!projectId) return;
     const { error } = await supabase.from("projects").update({ status: "USER_APPROVED" }).eq("id", projectId);
@@ -198,53 +270,49 @@ function PublishBody() {
     }
   }
 
-  async function handleSelectPlatform(platform: Platform) {
-    if (!projectId) return;
-    setSelectedPlatform(platform);
-    setPreparing(true);
+  async function handleRunPreflight() {
+    if (!projectId || !selectedPlatform || !livePreflight) return;
+    setPreflightMessage(
+      livePreflight.canProceed ? "✓ Preflight passed — no blockers found." : `⚠ ${livePreflight.bookBlockers.length} issue(s) need attention.`
+    );
+    await supabase.from("publishing_log").insert({
+      project_id: projectId,
+      event: `Preflight run for ${selectedPlatform}: ${livePreflight.canProceed ? "passed" : `${livePreflight.bookBlockers.length} issue(s) found`}.`,
+    });
+  }
+
+  async function handlePrepareForKdp() {
+    if (!projectId || !selectedPlatform) return;
+    setStartingJob(true);
     setPrepareError(null);
     try {
-      const prepared = {
-        title: passport?.identity?.workingTitle || "Untitled Project",
-        description: "", // filled below via metadata_department, not tracked on the passport type
-        keywords: "",
-        category: "",
-        price: prices.ebook.trim() ? prices.ebook : suggestPrice(passport?.scope?.wordsWritten ?? 0),
-      };
-      const { data: meta } = await supabase
-        .from("metadata_department")
-        .select("description_long, keywords, categories")
-        .eq("project_id", projectId)
-        .maybeSingle();
-      prepared.description = meta?.description_long || "No description generated yet.";
-      prepared.keywords = (meta?.keywords ?? []).join(", ") || "No keywords generated yet.";
-      prepared.category = meta?.categories?.[0] || "Not yet categorized";
-
-      const { data: job, error } = await supabase
-        .from("publishing_jobs")
-        .upsert(
-          {
-            project_id: projectId,
-            target_platform: platform,
-            readiness_snapshot: passport?.qualityGate ?? {},
-            prepared_fields: prepared,
-            status: "ready_for_review",
-          },
-          { onConflict: "project_id,target_platform" }
-        )
-        .select()
-        .single();
-
-      if (error) throw new Error(error.message);
-
-      setPublishingJobId(job.id);
-      setPreparedFields(prepared);
-      await supabase.from("projects").update({ status: "READY_FOR_EXPORT" }).eq("id", projectId);
-      await supabase.from("publishing_log").insert({ project_id: projectId, event: `Publishing package prepared for ${platform}.` });
+      const res = await fetch("/api/kdp-prepare/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, target_platform: selectedPlatform, requested_formats: selectedFormats }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not start KDP preparation.");
+      setJob(await fetchJob(selectedPlatform));
     } catch (e) {
-      setPrepareError(e instanceof Error ? e.message : "Could not prepare this listing.");
+      setPrepareError(e instanceof Error ? e.message : "Could not start KDP preparation.");
     } finally {
-      setPreparing(false);
+      setStartingJob(false);
+    }
+  }
+
+  async function handleDownloadPackage() {
+    if (!projectId || !selectedPlatform) return;
+    setDownloadingPackage(true);
+    try {
+      const res = await fetch(`/api/kdp-package-download?project=${projectId}&platform=${encodeURIComponent(selectedPlatform)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not build a download link.");
+      window.open(json.url, "_blank");
+    } catch (e) {
+      setPrepareError(e instanceof Error ? e.message : "Could not download the package.");
+    } finally {
+      setDownloadingPackage(false);
     }
   }
 
@@ -255,21 +323,16 @@ function PublishBody() {
   }
 
   async function handleMarkPublished() {
-    if (!projectId || !publishingJobId || !selectedPlatform) return;
+    if (!projectId || !job || !selectedPlatform) return;
     setMarkingPublished(true);
     const now = new Date().toISOString();
     await Promise.all([
-      supabase
-        .from("publishing_jobs")
-        .update({ status: "user_marked_published", marked_published_at: now })
-        .eq("id", publishingJobId),
+      supabase.from("publishing_jobs").update({ status: "user_marked_published", marked_published_at: now }).eq("id", job.id),
       supabase.from("projects").update({ status: "EXPORTED" }).eq("id", projectId),
-      supabase
-        .from("publishing_log")
-        .insert({ project_id: projectId, event: `User marked as published on ${selectedPlatform}.` }),
+      supabase.from("publishing_log").insert({ project_id: projectId, event: `User marked as published on ${selectedPlatform}.` }),
     ]);
     setMarkingPublished(false);
-    setPublished(true);
+    setJob((j) => (j ? { ...j, status: "user_marked_published" } : j));
   }
 
   const { checks: healthChecks, readinessPct } = passport ? computeBookHealth(passport) : { checks: [], readinessPct: 0 };
@@ -293,7 +356,7 @@ function PublishBody() {
       </header>
 
       <div className="wrap">
-        <h1>📦 Book Complete — Ready to Publish</h1>
+        <h1>📦 Publishing Control Center</h1>
 
         {!projectId && <p className="hint">No project specified. Head back to your dashboard to pick one.</p>}
         {projectId && loading && <p className="hint">Loading…</p>}
@@ -307,6 +370,16 @@ function PublishBody() {
                 <span className={readinessPct === 100 ? "ok" : undefined} style={readinessPct !== 100 ? { color: "#ffc266" } : undefined}>
                   {readinessPct}% ready
                 </span>
+              </div>
+              <div style={{ height: "6px", background: "rgba(255,255,255,.08)", borderRadius: "3px", overflow: "hidden", margin: "2px 0 14px" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${readinessPct}%`,
+                    background: readinessPct === 100 ? "#5fe3b8" : "var(--blueGlow)",
+                    transition: "width .3s",
+                  }}
+                />
               </div>
               {healthChecks.map((c) => (
                 <CheckRow key={c.label} label={c.label} ok={c.ok} text={c.ok ? "✓ Complete" : "Incomplete"} />
@@ -332,11 +405,7 @@ function PublishBody() {
                 ok={false}
                 text="Not available yet — InkFrame doesn't generate hardcover interior/cover files; use paperback or eBook for now"
               />
-              <CheckRow
-                label="Pricing"
-                ok={hasAnyPrice}
-                text={hasAnyPrice ? "✓ Set below" : "Not set — enter a price below"}
-              />
+              <CheckRow label="Pricing" ok={hasAnyPrice} text={hasAnyPrice ? "✓ Set below" : "Not set — enter a price below"} />
               <CheckRow label="Quality Checks" ok={qualityPassed} text={gate ? (qualityPassed ? "✓ Passed" : "Needs review") : "Not scored yet"} />
             </div>
             <p style={{ fontSize: "11.5px", color: "var(--muted)", margin: "-6px 0 10px" }}>
@@ -378,7 +447,8 @@ function PublishBody() {
                 </div>
               ))}
               <p className="hint" style={{ marginTop: "8px" }}>
-                Real prices you set, saved to this book&apos;s format editions as you type. Leave a format blank
+                Real prices you set, saved to this book&apos;s format editions as you type — this is what every
+                downstream step (Book Health, KDP preparation, the KDP Ready Package) uses. Leave a format blank
                 to fall back on InkFrame&apos;s starting suggestion when a listing is prepared below.
               </p>
             </div>
@@ -472,7 +542,7 @@ function PublishBody() {
                 <div style={{ fontWeight: 700, color: "#ffc266", marginBottom: "6px" }}>⏳ AWAITING YOUR APPROVAL</div>
                 <p style={{ fontSize: "12.5px", color: "#d9c8a8", lineHeight: 1.6, marginBottom: "14px" }}>
                   Everything above is complete and ready. Nothing has been sent anywhere yet. Review it, then
-                  approve to reveal your publishing package.
+                  approve to reveal your publishing controls.
                 </p>
                 <button
                   className="mark-published-btn"
@@ -493,19 +563,19 @@ function PublishBody() {
                     marginBottom: "24px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#5fe3b8" }}>✓ Approved — package ready</div>
+                  <div style={{ fontWeight: 700, color: "#5fe3b8" }}>✓ Approved — publishing controls unlocked</div>
                   <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "4px" }}>
-                    Choose a platform below to see your prepared listing and open its real bookshelf.
+                    Choose a publishing target and the formats you want prepared.
                   </p>
                 </div>
 
-                <div style={{ fontWeight: 700, marginBottom: "12px" }}>Where do you want to publish?</div>
+                <div style={{ fontWeight: 700, marginBottom: "12px" }}>Publishing Target</div>
                 <div className="platform-grid">
                   {(Object.keys(PLATFORM_LINKS) as Platform[]).map((platform) => (
                     <div
                       key={platform}
                       className={`platform-card${selectedPlatform === platform ? " selected" : ""}`}
-                      onClick={() => handleSelectPlatform(platform)}
+                      onClick={() => setSelectedPlatform(platform)}
                     >
                       <div className="pi">{PLATFORM_ICONS[platform]}</div>
                       {platform}
@@ -513,57 +583,210 @@ function PublishBody() {
                   ))}
                 </div>
 
-                {preparing && <p className="hint" style={{ marginTop: "16px" }}>Preparing your listing…</p>}
-                {prepareError && (
-                  <p style={{ color: "var(--red)", fontSize: "13px", marginTop: "16px" }}>{prepareError}</p>
-                )}
-
-                {preparedFields && selectedPlatform && !preparing && (
-                  <div className="prepared-panel show">
-                    <div style={{ fontWeight: 700, marginBottom: "16px" }}>
-                      Your {selectedPlatform} listing is ready
+                {selectedPlatform && (
+                  <>
+                    <div className="checklist-panel" style={{ marginTop: "20px", marginBottom: "22px" }}>
+                      <div style={{ fontWeight: 700, marginBottom: "10px" }}>Formats to Prepare for {selectedPlatform}</div>
+                      {ALL_FORMATS.map((f) => (
+                        <label key={f} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 0", fontSize: "13.5px", cursor: "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedFormats.includes(f)}
+                            onChange={(e) =>
+                              setSelectedFormats((prev) => (e.target.checked ? [...prev, f] : prev.filter((x) => x !== f)))
+                            }
+                          />
+                          {FORMAT_LABELS[f]}
+                          {f === "hardcover" && (
+                            <span style={{ fontSize: "11px", color: "var(--muted)" }}>(needs manual completion — InkFrame can&apos;t generate hardcover files yet)</span>
+                          )}
+                        </label>
+                      ))}
                     </div>
 
-                    {(
-                      [
-                        ["title", "Title", preparedFields.title],
-                        ["description", "Description", preparedFields.description],
-                        ["keywords", "Keywords (7)", preparedFields.keywords],
-                        ["category", "Recommended Category", preparedFields.category],
-                        ["price", "Suggested Price", `$${preparedFields.price}`],
-                      ] as const
-                    ).map(([key, label, value]) => (
-                      <div className="pf-row" key={key}>
-                        <label>{label}</label>
-                        <div className="pf-value">
-                          <div className="pf-text">{value}</div>
-                          <button className="copy-btn" onClick={() => handleCopy(key, value)}>
-                            {copiedField === key ? "✓ Copied" : "Copy"}
+                    <div className="checklist-panel" style={{ marginBottom: "22px" }}>
+                      <div style={{ fontWeight: 700, marginBottom: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>KDP Preflight</span>
+                        <button className="copy-btn" onClick={handleRunPreflight}>
+                          Run Full Preflight
+                        </button>
+                      </div>
+                      {livePreflight && livePreflight.bookBlockers.length > 0 ? (
+                        <>
+                          <p style={{ color: "#ffc266", fontSize: "13px", marginBottom: "8px" }}>
+                            Cannot prepare for KDP yet. {livePreflight.bookBlockers.length} issue(s) need attention:
+                          </p>
+                          {livePreflight.bookBlockers.map((b) => (
+                            <div className="check-row" key={b.label}>
+                              <span>{b.label}</span>
+                              <button className="copy-btn" onClick={() => router.push(b.route)}>
+                                Fix
+                              </button>
+                            </div>
+                          ))}
+                        </>
+                      ) : (
+                        livePreflight && <p style={{ color: "#5fe3b8", fontSize: "13px" }}>✓ Ready to prepare — no blockers found.</p>
+                      )}
+                      {livePreflight && (
+                        <div style={{ marginTop: "10px" }}>
+                          {livePreflight.formats
+                            .filter((f) => f.requested)
+                            .map((f) => (
+                              <div className="check-row" key={f.format}>
+                                <span style={{ textTransform: "capitalize" }}>{f.format}</span>
+                                <span style={{ color: f.ready ? "#5fe3b8" : f.supported ? "#ffc266" : "var(--muted)" }}>
+                                  {f.ready ? "✓ Ready" : !f.supported ? "Not supported yet" : "Needs attention"}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                      {preflightMessage && (
+                        <p className="hint" style={{ marginTop: "8px" }}>
+                          {preflightMessage}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="checklist-panel" style={{ marginBottom: "22px" }}>
+                      <div style={{ fontWeight: 700, marginBottom: "10px" }}>Background Publishing Preparation</div>
+
+                      {(!job || !ACTIVE_STATUSES.includes(job.status)) && job?.status !== "needs_attention" && (
+                        <>
+                          <p className="hint" style={{ marginBottom: "10px" }}>
+                            InkFrame will validate everything, then build a complete KDP Ready Package. You can
+                            close this page — preparation continues in the background, and you can check back
+                            once it&apos;s done.
+                          </p>
+                          <button className="mark-published-btn" onClick={handlePrepareForKdp} disabled={startingJob || !livePreflight?.canProceed}>
+                            {startingJob ? "Starting…" : job ? "Prepare Again" : "Prepare for KDP"}
                           </button>
+                        </>
+                      )}
+
+                      {job && ACTIVE_STATUSES.includes(job.status) && (
+                        <>
+                          <p style={{ color: "#ffc266", fontSize: "13px", marginBottom: "10px" }}>
+                            Preparing &quot;{passport.identity?.workingTitle || "your book"}&quot; for {selectedPlatform}…
+                          </p>
+                          {job.stages.map((s) => (
+                            <div className="check-row" key={s.key}>
+                              <span>{s.label}</span>
+                              <span style={{ color: stageStatusColor(s.status) }}>{stageStatusText(s.status)}</span>
+                            </div>
+                          ))}
+                          <p className="hint" style={{ marginTop: "10px", marginBottom: "10px" }}>
+                            Running in the background — you can leave this page and come back later.
+                          </p>
+                          <button className="copy-btn" onClick={() => router.push(`/passport?project=${projectId}`)}>
+                            Continue Working
+                          </button>
+                        </>
+                      )}
+
+                      {job && job.status === "needs_attention" && (
+                        <>
+                          <p style={{ color: "var(--red)", fontSize: "13px", marginBottom: "10px" }}>
+                            {job.error || "Preparation needs attention."}
+                          </p>
+                          {job.stages.map((s) => (
+                            <div className="check-row" key={s.key}>
+                              <span>{s.label}</span>
+                              <span style={{ color: stageStatusColor(s.status) }}>{stageStatusText(s.status)}</span>
+                            </div>
+                          ))}
+                          <button className="mark-published-btn" style={{ marginTop: "10px" }} onClick={handlePrepareForKdp} disabled={startingJob}>
+                            {startingJob ? "Retrying…" : "Retry"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {prepareError && <p style={{ color: "var(--red)", fontSize: "13px", marginBottom: "16px" }}>{prepareError}</p>}
+
+                    {job && !ACTIVE_STATUSES.includes(job.status) && job.status !== "needs_attention" && job.prepared_fields && (
+                      <div className="prepared-panel show">
+                        <div style={{ fontWeight: 700, marginBottom: "4px" }}>Ready for KDP</div>
+                        <p className="hint" style={{ marginBottom: "16px" }}>
+                          {job.prepared_at ? `Prepared ${new Date(job.prepared_at).toLocaleString()}. ` : ""}
+                          Review everything below, then open {selectedPlatform} to finish the upload — the final
+                          publish decision is always yours.
+                        </p>
+
+                        {(
+                          [
+                            ["title", "Title", job.prepared_fields.title],
+                            ["description", "Description", job.prepared_fields.description],
+                            ["keywords", "Keywords (7)", job.prepared_fields.keywords],
+                            ["category", "Recommended Category", job.prepared_fields.category],
+                            ["price", "Suggested Price", `$${job.prepared_fields.price}`],
+                          ] as const
+                        ).map(([key, label, value]) => (
+                          <div className="pf-row" key={key}>
+                            <label>{label}</label>
+                            <div className="pf-value">
+                              <div className="pf-text">{value}</div>
+                              <button className="copy-btn" onClick={() => handleCopy(key, value)}>
+                                {copiedField === key ? "✓ Copied" : "Copy"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+
+                        <div style={{ marginBottom: "16px" }}>
+                          <div style={{ fontWeight: 700, fontSize: "12px", textTransform: "uppercase", letterSpacing: ".4px", color: "var(--muted)", marginBottom: "6px" }}>
+                            Formats
+                          </div>
+                          {job.requested_formats.map((f) => {
+                            const fr = livePreflight?.formats.find((x) => x.format === f);
+                            return (
+                              <div className="check-row" key={f}>
+                                <span style={{ textTransform: "capitalize" }}>{f}</span>
+                                <span style={{ color: fr?.ready ? "#5fe3b8" : "var(--muted)" }}>
+                                  {fr?.ready ? "✓ ready" : fr?.supported ? "needs manual completion" : "not supported yet"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div style={{ fontWeight: 700, fontSize: "12px", textTransform: "uppercase", letterSpacing: ".4px", color: "var(--muted)", marginBottom: "6px" }}>
+                          KDP Status
+                        </div>
+                        <p className="hint" style={{ marginBottom: "16px" }}>
+                          Ready for manual completion — InkFrame has no official KDP integration to create or
+                          verify a draft, so nothing has been submitted anywhere on your behalf.
+                        </p>
+
+                        {job.package_ref && (
+                          <button className="copy-btn" style={{ width: "100%", marginBottom: "12px", padding: "12px" }} onClick={handleDownloadPackage} disabled={downloadingPackage}>
+                            {downloadingPackage ? "Preparing download…" : "⇩ Download KDP Ready Package (.zip)"}
+                          </button>
+                        )}
+
+                        <a href={PLATFORM_LINKS[selectedPlatform]} className="kdp-link-btn" target="_blank" rel="noreferrer">
+                          Open {selectedPlatform} Bookshelf ↗
+                        </a>
+
+                        {job.status === "user_marked_published" ? (
+                          <button className="mark-published-btn" disabled>
+                            ✓ Marked as Published
+                          </button>
+                        ) : (
+                          <button className="mark-published-btn" onClick={handleMarkPublished} disabled={markingPublished}>
+                            {markingPublished ? "Saving…" : "✓ I've Published This"}
+                          </button>
+                        )}
+
+                        <div className="safety-note">
+                          ✦ InkFrame prepares everything above for you to review and use — it never logs into or
+                          submits directly to your publishing account. You always make the final upload yourself, on
+                          your own platform login.
                         </div>
                       </div>
-                    ))}
-
-                    <a href={PLATFORM_LINKS[selectedPlatform]} className="kdp-link-btn" target="_blank" rel="noreferrer">
-                      Open {selectedPlatform} Bookshelf ↗
-                    </a>
-
-                    {published ? (
-                      <button className="mark-published-btn" disabled>
-                        ✓ Marked as Published
-                      </button>
-                    ) : (
-                      <button className="mark-published-btn" onClick={handleMarkPublished} disabled={markingPublished}>
-                        {markingPublished ? "Saving…" : "✓ I've Published This"}
-                      </button>
                     )}
-
-                    <div className="safety-note">
-                      ✦ InkFrame prepares everything above for you to review and use — it never logs into or
-                      submits directly to your publishing account. You always make the final upload yourself, on
-                      your own platform login.
-                    </div>
-                  </div>
+                  </>
                 )}
               </>
             )}

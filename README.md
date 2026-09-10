@@ -1294,6 +1294,96 @@ that isn't there. Not counted in the Book Health percentage — like
 paperback, hardcover would be opt-in, but unlike paperback there's
 currently no way to ever make it "ready."
 
+## Publishing Control Center: background KDP preparation
+
+The next spec asked to upgrade `/publish` into a full "Publishing Control
+Center" — coordinating format selection, a KDP preflight, and a
+resumable background job that prepares everything possible for KDP while
+the user is away, stopping at a safe "ready for review" state rather than
+ever touching KDP's actual Publish button. It was explicit about the
+failure mode to avoid: a second readiness engine, a second job system, or
+a second export pipeline running alongside the ones already built.
+
+**What got reused, not rebuilt:**
+
+- **Readiness**: `computeBookHealth()` is still the only readiness
+  authority. The new preflight logic (`lib/kdp-preparation.ts`) doesn't
+  score anything itself — it reads `computeBookHealth()`'s own checks and
+  adds exactly the one thing genuinely missing from it: per-format
+  completeness (a book can be healthy overall while its paperback edition
+  still needs a cover, or while hardcover — which InkFrame can't produce
+  at all — was requested anyway). No `publishReadiness()`/`kdpReadiness()`
+  ever got created.
+- **The job record**: background preparation runs as a new status
+  lifecycle on the *existing* `publishing_jobs` table (migration
+  `0018_publishing_jobs_background.sql`), not a second job table.
+  `publishing_jobs` was already the one row per project+platform,
+  unique-constrained since migration `0004` — that uniqueness is what
+  makes duplicate-job prevention free: clicking "Prepare for KDP" twice
+  hits the same row, so a second click while one's already running just
+  shows its progress instead of starting a second run.
+- **The background runner**: `lib/kdp-preparation-department.ts` is one
+  more entry in the same `DEPARTMENTS` array and cron-tick architecture
+  every other background process in this app already uses (Writing
+  Agent, Quality Loop, Audiobook Studio, etc.) — one stage of one job per
+  tick, same as everywhere else. Nothing new was invented for "how does
+  background work happen in InkFrame."
+- **The package**: the KDP Ready Package (`lib/kdp-package.ts`) reuses
+  the exact same JSZip-plus-private-`exports`-bucket pattern as
+  `/api/production-package` — a differently organized bundle for a
+  specific purpose (structured for KDP upload: `01-Manuscript/`,
+  `02-Covers/`, `03-Interior/`, `04-Metadata/`, `05-Pricing/`,
+  `06-Preflight/`), not a second export mechanism.
+- **Real assets only**: the background job never generates a cover,
+  manuscript, or metadata itself — it only validates and packages what
+  the existing Cover Studio / Formatter / Metadata Studio already
+  produced. A paperback full-cover PDF in the package is the literal same
+  file `/api/print-cover` made, fetched by its known storage path — not
+  regenerated.
+
+**The stage machine.** Each `publishing_jobs` row carries a `stages` array
+(`preflight` → `package` → `finalize`), advanced one stage per tick and
+persisted after every step — this is what makes it resumable: a retry
+picks up at the first stage that isn't `passed` rather than restarting the
+whole run, and a stage that already succeeded (a manuscript already
+packaged, say) is never redone. A stage that fails records the real error
+and flips the job to `needs_attention`; nothing is ever reported as
+succeeded without the write that proves it.
+
+**Blockers vs. per-format gaps — the spec's own distinction.** Book-level
+blockers (unapproved chapters, no metadata, ungraded quality gate, rights
+not confirmed, AI-disclosure not acknowledged) stop preparation entirely —
+these apply no matter which formats were requested. Per-format gaps never
+block the whole run: if paperback's cover isn't ready yet but the ebook is
+fully prepared, the job still completes and the package includes what's
+real, with a clear note on what still needs manual work. Hardcover is
+always in that second category — not a fixable gap, a real capability
+limit (InkFrame has no hardcover file generator), reported the same
+honest way everywhere: `/publish`'s checklist, the live preflight panel,
+and the package's own `preflight-summary.txt`.
+
+**The hard gate.** The background job's only possible end states are
+`ready_for_review` (or `needs_attention` if it couldn't proceed) — never
+"published," never "draft created," because no official KDP API exists to
+create or verify either (see "KDP integration" above — nothing changed
+about that research this round). `/publish`'s KDP Status always reads
+"Ready for manual completion" until the *user* clicks "I've Published
+This" themselves, which is the same explicit, unverifiable-by-InkFrame
+self-report the app has used since the original Publishing Engine.
+
+**Dashboard**: a new "Publishing Jobs" panel lists every book with an
+active, blocked, or freshly-completed KDP preparation run across the
+user's whole library at once (spec: multiple books, one queue) — reading
+the same `publishing_jobs` rows `/publish` itself drives, not a separate
+query result that could drift from what the control center shows.
+
+Verified with a real runtime script (not just `tsc`): synthetic
+`BookPassport` fixtures confirmed book-level blockers fire correctly for
+missing rights/disclosure/manuscript-approval, per-format gaps don't
+block the run, hardcover is never marked ready, and a fake-Supabase KDP
+package build produces the real `01-06` folder structure with real saved
+prices (never a suggestion) in `05-Pricing/pricing.json`.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

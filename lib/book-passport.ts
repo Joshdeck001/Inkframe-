@@ -70,7 +70,14 @@ export type BookPassport = {
   formatting: { editions: { formatType: string; status: string; pageCount: number | null; price: number | null }[] };
   translations: { language: string; status: string | null }[];
   audiobook: { status: string | null; voice: string | null } | null;
-  publishing: { targetPlatform: string; status: string }[];
+  publishing: {
+    targetPlatform: string;
+    status: string;
+    requestedFormats: string[];
+    preparedAt: string | null;
+    hasPackage: boolean;
+    error: string | null;
+  }[];
   marketing: { hasStrategy: boolean };
   declarations: { rightsConfirmed: boolean; rightsBasis: string | null; aiDisclosureAcknowledged: boolean } | null;
 };
@@ -115,7 +122,10 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     supabase.from("format_editions").select("format_type, status, page_count, price").eq("project_id", projectId),
     supabase.from("translation_jobs").select("target_languages, translated_outputs, status").eq("source_project_id", projectId),
     supabase.from("audiobook_jobs").select("status, voice").eq("project_id", projectId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("publishing_jobs").select("target_platform, status").eq("project_id", projectId),
+    supabase
+      .from("publishing_jobs")
+      .select("target_platform, status, requested_formats, prepared_at, package_ref, error")
+      .eq("project_id", projectId),
     supabase.from("advertising_projects").select("id").eq("project_id", projectId).maybeSingle(),
     supabase.from("publishing_declarations").select("rights_confirmed, rights_basis, ai_disclosure_acknowledged").eq("project_id", projectId).maybeSingle(),
   ]);
@@ -208,7 +218,14 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     },
     translations,
     audiobook: audiobookJob ? { status: audiobookJob.status, voice: audiobookJob.voice } : null,
-    publishing: (publishingJobs ?? []).map((p) => ({ targetPlatform: p.target_platform, status: p.status })),
+    publishing: (publishingJobs ?? []).map((p) => ({
+      targetPlatform: p.target_platform,
+      status: p.status,
+      requestedFormats: p.requested_formats ?? [],
+      preparedAt: p.prepared_at,
+      hasPackage: !!p.package_ref,
+      error: p.error,
+    })),
     marketing: { hasStrategy: !!advertisingProject },
     declarations: declarations
       ? {

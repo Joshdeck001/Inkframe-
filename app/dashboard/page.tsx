@@ -107,6 +107,9 @@ export default function DashboardPage() {
   const [completedCount, setCompletedCount] = useState(0);
   const [tasks, setTasks] = useState<{ projectId: string; title: string; issue: string; route: string }[]>([]);
   const [recentActivity, setRecentActivity] = useState<{ title: string; event: string; time: string }[]>([]);
+  const [publishingJobs, setPublishingJobs] = useState<
+    { projectId: string; title: string; targetPlatform: string; status: string; stagesDone: number; stagesTotal: number }[]
+  >([]);
   const [adminMessages, setAdminMessages] = useState<{ id: string; body: string }[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -210,6 +213,38 @@ export default function DashboardPage() {
           );
           setRecentActivity(
             log.map((r) => ({ title: allTitleById.get(r.project_id) ?? "Untitled Project", event: r.event, time: relativeTime(r.occurred_at) }))
+          );
+        }
+      }
+
+      // Publishing Jobs — background KDP preparation across every book at
+      // once (spec: multiple books, one queue), reading the same
+      // publishing_jobs rows /publish itself drives. Only the states worth
+      // a user's attention: actively running, blocked, or freshly ready
+      // (a job already marked user_marked_published has nothing left to
+      // show here).
+      if (allIds.length > 0) {
+        const { data: jobs } = await supabase
+          .from("publishing_jobs")
+          .select("project_id, target_platform, status, stages")
+          .in("project_id", allIds)
+          .in("status", ["queued", "running", "needs_attention", "ready_for_review"]);
+        if (!cancelled && jobs) {
+          const allTitleById2 = new Map(
+            ((projectRows ?? []) as unknown as ProjectRow[]).map((p) => [p.id, p.project_identity?.working_title || "Untitled Project"])
+          );
+          setPublishingJobs(
+            jobs.map((j) => {
+              const stages = (j.stages as { status: string }[] | null) ?? [];
+              return {
+                projectId: j.project_id,
+                title: allTitleById2.get(j.project_id) ?? "Untitled Project",
+                targetPlatform: j.target_platform,
+                status: j.status,
+                stagesDone: stages.filter((s) => s.status === "passed").length,
+                stagesTotal: stages.length || 3,
+              };
+            })
           );
         }
       }
@@ -925,6 +960,33 @@ export default function DashboardPage() {
                       <div className="export-row" key={i}>
                         <span className="name">{a.title} — {a.event}</span>
                         <span className="time">{a.time}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {publishingJobs.length > 0 && (
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h3>Publishing Jobs</h3>
+                    </div>
+                    {publishingJobs.map((j) => (
+                      <div
+                        className="export-row"
+                        key={`${j.projectId}-${j.targetPlatform}`}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => router.push(`/publish?project=${j.projectId}`)}
+                      >
+                        <span className="name">
+                          {j.title} — {j.targetPlatform} KDP Preparation
+                          {(j.status === "queued" || j.status === "running") && ` (${j.stagesDone}/${j.stagesTotal})`}
+                        </span>
+                        <span className={j.status === "needs_attention" ? "time" : "check"} style={{ marginLeft: "auto" }}>
+                          {j.status === "queued" && "Queued"}
+                          {j.status === "running" && "Preparing…"}
+                          {j.status === "needs_attention" && "⚠ Needs Attention"}
+                          {j.status === "ready_for_review" && "✓ Ready for Review"}
+                        </span>
                       </div>
                     ))}
                   </div>

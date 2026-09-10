@@ -100,6 +100,15 @@
      purely the record of the author having reviewed and confirmed them
      before publishing — a real gate in the Book Health checklist instead
      of a one-time informational note nobody has to act on.
+   - `supabase/migrations/0018_publishing_jobs_background.sql` — upgrades
+     `publishing_jobs` (already the one row-per-project-per-platform
+     publishing record, unique since `0004`) into the backing store for
+     background KDP preparation: `requested_formats`, resumable `stages`,
+     `blockers`, `package_ref`, `started_at`/`prepared_at`/`error`, plus
+     new status values (`queued`/`running`/`needs_attention`/`failed`/
+     `cancelled` alongside the original four). See "Publishing Control
+     Center" in the root `README.md` for why this reuses `publishing_jobs`
+     instead of a second job table.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

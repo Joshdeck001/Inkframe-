@@ -76,5 +76,11 @@ export const POST = withCors(withJsonErrors(async (request: Request) => {
     .single();
   if (error || !data) return NextResponse.json({ error: error?.message || "Could not save the clip." }, { status: 500 });
 
+  // Keeps the device's recorded extension_version current without requiring a
+  // reconnect after an upgrade — best-effort, never blocks the real capture above.
+  if (typeof extension_version === "string" && extension_version) {
+    await service.from("extension_connections").update({ extension_version: extension_version.slice(0, 30) }).eq("id", resolved.connectionId);
+  }
+
   return NextResponse.json({ clip_id: data.id });
 }));

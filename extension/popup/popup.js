@@ -11,6 +11,8 @@ const SUPPORTED_HOSTS = ["amazon.", "play.google.com", "kobo.com"];
 let collectionPaused = false;
 
 const els = {
+  unsupportedView: document.getElementById("unsupported-view"),
+  unsupportedDetail: document.getElementById("unsupported-detail"),
   setupView: document.getElementById("setup-view"),
   connectedView: document.getElementById("connected-view"),
   apiBaseUrl: document.getElementById("api-base-url"),
@@ -50,6 +52,26 @@ function isSupportedUrl(url) {
 }
 
 async function init() {
+  // Mobile browsers open popup.html as a full tab rather than a small toolbar
+  // popup, so the fixed desktop-popup width would strand most of the screen
+  // empty — switch to the fluid layout in popup.css for real mobile devices,
+  // using the same honest userAgent-based detection already used for device
+  // registration (never a guessed viewport-width breakpoint).
+  if (detectDeviceInfo().device_type === "mobile") {
+    document.body.classList.add("mobile-context");
+  }
+
+  // Real capability check before anything else touches chrome.storage/tabs/scripting —
+  // a browser missing one of these would otherwise fail with a confusing, unhandled
+  // exception instead of an honest, specific message (see extension/lib/browser-
+  // capabilities.js and "no fake compatibility layer" in the cross-platform spec).
+  const missing = missingRequiredCapabilities();
+  if (missing.length > 0) {
+    els.unsupportedDetail.textContent = `Missing: ${describeMissingCapabilities(missing)}.`;
+    els.unsupportedView.hidden = false;
+    return;
+  }
+
   const { apiBaseUrl, token } = await getStoredAuth();
   if (!apiBaseUrl || !token) {
     els.setupView.hidden = false;
@@ -173,7 +195,7 @@ els.connectBtn.addEventListener("click", async () => {
     const res = await fetch(`${apiBaseUrl}/api/inkframescout/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, ...detectDeviceInfo() }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Could not verify that code.");

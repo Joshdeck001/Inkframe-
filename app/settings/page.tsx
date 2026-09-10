@@ -25,7 +25,18 @@ export default function SettingsPage() {
   const [savingProvider, setSavingProvider] = useState(false);
 
   const [connections, setConnections] = useState<
-    { id: string; name: string; created_at: string; last_used_at: string | null; status: string; paused: boolean }[] | null
+    {
+      id: string;
+      name: string;
+      created_at: string;
+      last_used_at: string | null;
+      status: string;
+      paused: boolean;
+      device_type: string | null;
+      browser_name: string | null;
+      browser_version: string | null;
+      extension_version: string | null;
+    }[] | null
   >(null);
   const [scoutDiagnostics, setScoutDiagnostics] = useState<{
     unassigned_clips: number;
@@ -141,7 +152,7 @@ export default function SettingsPage() {
   async function loadConnections() {
     const { data } = await supabase
       .from("extension_connections")
-      .select("id, name, created_at, last_used_at, status, paused")
+      .select("id, name, created_at, last_used_at, status, paused, device_type, browser_name, browser_version, extension_version")
       .order("created_at", { ascending: false });
     setConnections(data ?? []);
 
@@ -384,6 +395,16 @@ export default function SettingsPage() {
                   Created {new Date(c.created_at).toLocaleDateString()}
                   {c.last_used_at ? ` · Last used ${new Date(c.last_used_at).toLocaleString()}` : " · Never used"}
                 </span>
+                {(c.device_type || c.browser_name || c.extension_version) && (
+                  <>
+                    <br />
+                    <span className="hint">
+                      {c.device_type ? (c.device_type === "mobile" ? "📱 Mobile" : "🖥 Desktop") : "Device unknown"}
+                      {c.browser_name ? ` · ${c.browser_name}${c.browser_version ? ` ${c.browser_version}` : ""}` : ""}
+                      {c.extension_version ? ` · Extension v${c.extension_version}` : ""}
+                    </span>
+                  </>
+                )}
               </span>
               {c.status === "active" && (
                 <div style={{ display: "flex", gap: "8px" }}>

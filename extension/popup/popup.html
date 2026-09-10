@@ -10,6 +10,15 @@
     <div class="logo"><span class="ink">Inkframe</span><span class="scout">Scout</span></div>
   </header>
 
+  <main id="unsupported-view" hidden>
+    <p class="hint">This browser is missing a feature InkframeScout needs:</p>
+    <p id="unsupported-detail" class="error"></p>
+    <p class="hint small">
+      InkframeScout is a standards-based WebExtension — it should work in any browser that supports the
+      WebExtension APIs above. See <code>extension/README.md</code> for the current browser compatibility matrix.
+    </p>
+  </main>
+
   <main id="setup-view" hidden>
     <p class="hint">Connect this extension to your InkFrame account.</p>
     <label>InkFrame URL</label>
@@ -62,6 +71,7 @@
     </div>
   </main>
 
+  <script src="../lib/browser-capabilities.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

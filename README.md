@@ -2377,6 +2377,119 @@ directly into that session; adding a follow-up creates a real
 `research_notes` row visible there. Typing an ordinary book title
 instead should do nothing but filter the book list, exactly as before.
 
+## InkframeScout — Cross-Platform Desktop + Mobile Support
+
+A fifth InkframeScout spec asked for real desktop *and* Android support,
+explicitly forbidding Kiwi Browser (archived/discontinued Jan 2025) as a
+hard dependency or architectural foundation — legacy/test reference only.
+Per the spec's own instruction, this was an honest capability audit first:
+`extract.js`'s core mechanism (`chrome.scripting.executeScript`) already
+works under Firefox's MV3 implementation (101+), so the extension's code
+was already portable. What actually needed building was a real capability
+layer, real device registration, and an honest compatibility matrix — not
+a rewrite of the capture logic.
+
+**What was built:**
+
+- **Browser capability layer** (`extension/lib/browser-capabilities.js`) —
+  `detectBrowserCapabilities()` checks the real APIs the popup depends on
+  (`storage`, `scripting`, `tabs`, `runtime`) at startup; a browser missing
+  one gets an honest "This browser is missing a feature InkframeScout
+  needs" screen (`popup.html`'s new `#unsupported-view`) instead of a
+  confusing unhandled exception. `detectDeviceInfo()` reads
+  `navigator.userAgent` to report `device_type` (`desktop`/`mobile`),
+  `browser_name`, and `browser_version` — best-effort and honest, never
+  used to gate functionality (only the capability check above does that).
+- **Manifest audit** — added `browser_specific_settings.gecko.id` /
+  `strict_min_version` to `manifest.json`, required for Firefox AMO
+  signing (see below); Chrome ignores the unknown key when loaded
+  unpacked, it's only checked at Chrome Web Store submission time, which
+  this project doesn't do.
+- **Device registration ("ScoutDevice")** — rather than a new table, the
+  existing `extension_connections` row already *is* one device's
+  credential, so migration `0026` adds `device_type`, `browser_name`,
+  `browser_version`, and `extension_version` columns to it directly.
+  `/api/inkframescout/verify` stores the first three at connect time from
+  what the extension itself reports (never guessed server-side);
+  `/api/inkframescout/observations` opportunistically refreshes
+  `extension_version` on every real capture, so an upgraded extension's
+  version shows up without forcing a reconnect. Settings → Extensions →
+  InkframeScout now lists each connection's device type, browser, and
+  extension version so multiple connected devices are distinguishable.
+- **Cloud-mediated sync, never device-to-device** — already true of the
+  existing architecture (every device talks only to its own InkFrame
+  account's API; there is no direct connection between two browsers) and
+  restated explicitly in `extension/README.md`'s new "Cross-Platform
+  Support" section, since the spec asked for it to be an explicit,
+  checkable property rather than an implicit one.
+- **Offline queue** — the existing `chrome.storage.local` retry queue
+  (see "InkframeScout — a real extension" above) needed no changes to
+  keep working identically on a mobile connection; confirmed unchanged
+  and documented as such rather than silently assumed.
+- **Responsive, touch-friendly popup UI** (`extension/popup/popup.css`) —
+  buttons and inputs now have a `min-height: 44px` touch target; a real
+  `mobile-context` class (set by `popup.js` from `detectDeviceInfo()`,
+  not a guessed viewport-width breakpoint, since Chrome's desktop popup
+  and a Firefox/Edge Android tab can report overlapping widths) switches
+  the fixed 320px desktop-popup layout to a fluid, centered one so a
+  phone-sized tab isn't stranded with empty space; `.footer-actions` now
+  wraps instead of overflowing on narrow screens.
+- **Portable marketplace adapters** — audited, not rewritten:
+  `extract.js`'s field-extraction logic reads only already-rendered DOM
+  text/labels (no Chrome-specific APIs beyond the four capability-checked
+  ones above), so it needs no marketplace-specific or browser-specific
+  branches to run under Firefox.
+- **Honest browser compatibility matrix** (`extension/README.md`) —
+  populated from each vendor's current, sourced documentation (Chrome for
+  Android: no extension support, a platform limitation; Firefox for
+  Android: signed-only via AMO; Edge for Android: store-only since Feb
+  2024; Kiwi: archived Jan 2025, legacy/test reference only; Yandex:
+  unverified sideload support and a real privacy concern, not
+  recommended) — not a single fabricated compatibility claim in it.
+- **`npm run build:extension`** — documented alias for the existing
+  `scripts/build-extension-zip.ts` (already wired to `predev`/`prebuild`),
+  so it can be run standalone without starting the dev server.
+
+**Explicitly declined, and why:**
+
+- **Making Kiwi Browser any kind of foundation** — per the spec's own
+  instruction. It's mentioned in the compatibility matrix only as a
+  legacy/test reference, clearly marked archived/unsupported.
+- **QR-code connection convenience** — the spec listed this as optional.
+  Generating a QR code either needs a new client-side dependency (real,
+  justifiable cost for a "nice to have") or a third-party QR-rendering
+  service, which would mean sending the connection secret to a service
+  outside InkFrame's control — a real credential-leak surface for a
+  convenience feature. Declined this round; the existing copy/paste
+  connection code remains the only path. If a self-hosted QR library
+  becomes worth the dependency weight later, it can be added without
+  touching the underlying connection-code mechanism at all.
+- **A turnkey Android install** — does not exist for any actively
+  maintained browser today (see the matrix). Documented the real signing
+  paths (`web-ext sign` for Firefox with the user's own AMO account, the
+  Edge Add-ons store for Edge) instead of building a fake one-click
+  installer that can't actually exist.
+
+**Verified:** `tsc --noEmit` and `eslint` (repo-wide, zero new errors), a
+full production build, and `node --check` against all four extension JS
+files (no bundler/TypeScript in `extension/`, so this is its real syntax
+check). Migration `0026` follows the existing convention of not listing a
+literal `null` inside a `CHECK ... IN (...)` clause (redundant — `NULL`
+always satisfies a Postgres CHECK constraint regardless of what's in the
+list).
+
+**Known limitations, stated plainly:** this sandboxed environment has no
+live Supabase project, no real desktop browser to load the extension into,
+and no Android device — so no "it works on Android" claim is made anywhere
+in this round's work. What's real and testable once you apply migration
+`0026`: Settings → Extensions → InkframeScout showing real device/browser
+metadata per connection after you reconnect (existing connections show
+"Device unknown" until reconnected, since the data didn't exist before),
+and `npm run build:extension` producing a fresh, loadable zip. Getting a
+signed build onto a real Android device requires your own Mozilla AMO or
+Microsoft Partner Center developer account — an external step no sandboxed
+build environment can complete on your behalf.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

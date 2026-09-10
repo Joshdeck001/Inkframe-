@@ -14,11 +14,28 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, "Segoe UI", Inter, Arial, sans-serif; }
 
+html, body { max-width: 100%; }
+
 body {
+  /* 320px matches Chrome/Edge's desktop toolbar popup. */
   width: 320px;
+  max-width: 100vw;
+  min-height: 100vh;
   background: var(--black);
   color: var(--ink);
   font-size: 13px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Set by popup.js (via detectDeviceInfo()) on mobile browsers, where popup.html opens
+   as an ordinary full tab instead of a small toolbar popup — the fixed 320px above
+   would otherwise strand most of a phone screen empty. Driven by the same real
+   userAgent-based device detection already used for device registration, not a
+   guessed viewport-width breakpoint. */
+body.mobile-context {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
 }
 
 header {
@@ -50,10 +67,12 @@ select {
   padding: 8px 10px;
   color: var(--ink);
   font-size: 12.5px;
+  min-height: 44px;
 }
 
 button {
   width: 100%;
+  min-height: 44px;
   border-radius: 8px;
   padding: 10px;
   font-size: 13px;
@@ -100,4 +119,5 @@ button.secondary {
 }
 .page-status.supported { color: var(--blue-glow); border-color: rgba(76,139,255,.3); }
 
-.footer-actions { display: flex; gap: 8px; margin-top: 14px; }
+.footer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.footer-actions button { flex: 1 1 120px; }

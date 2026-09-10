@@ -108,6 +108,95 @@ real source below.
 6. Open the extension's popup, enter your InkFrame URL and paste the code,
    then click **Connect**.
 
+## Cross-Platform Support
+
+InkframeScout is a standards-based Manifest V3 WebExtension — `extract.js`'s
+core mechanism (`chrome.scripting.executeScript`) is supported by Firefox
+101+ under MV3, so the extension's own code was already portable before this
+section existed. What actually varies by platform is **how you get it
+installed**, not whether it works once installed. `extension/lib/browser-
+capabilities.js` checks the real APIs the popup needs (`storage`,
+`scripting`, `tabs`, `runtime`) at startup and shows an honest "this browser
+is missing X" screen instead of failing silently or claiming support it
+can't verify — there is no fake compatibility layer here.
+
+### Browser compatibility matrix
+
+Sourced from each browser vendor's own current documentation, not assumed
+from familiarity with older extension platforms — re-verify before trusting
+this table if it's been a while, since store/OS policies do change.
+
+| Browser | Desktop | Android |
+| --- | --- | --- |
+| Chrome | ✅ Load unpacked (Developer mode) | ❌ Not supported — Chrome for Android has no extension support at all, a platform-level limitation, not a store restriction |
+| Edge | ✅ Load unpacked (Developer mode) | ⚠️ Edge for Android added real extension support in Feb 2024 (stable ~v134+), but **only** through Edge's own Add-ons store — there is no sideload/"Load unpacked" path on Android |
+| Firefox | ✅ Load unpacked via `about:debugging` (temporary) or a self-signed build | ⚠️ Firefox for Android only runs **signed** extensions (via Mozilla AMO), never an unpacked/unsigned load — see below |
+| Kiwi Browser | ⚠️ Legacy/test reference only | ⚠️ Kiwi was **archived/discontinued in January 2025** and pulled from the Play Store; its last APK still sideloads unpacked extensions from GitHub, which is why it was useful during development, but it is not an actively maintained target and isn't recommended going forward |
+| Yandex Browser | Not tested | Not recommended — sideload support on Android is unverified, and Yandex's data-handling practices are a real privacy concern independent of extension compatibility |
+
+**Bottom line for Android:** genuine sideloadable ("Load unpacked") Android
+extension support does not currently exist in any actively-maintained
+browser. Getting InkframeScout running on an Android device today requires
+going through one browser vendor's real signing/publishing gate — there is
+no way around that this project can build, and no shortcut is taken here.
+
+### Desktop installation
+
+See "Installing" above — download the zip from InkFrame's Settings page (or
+build it locally with `npm run build:extension`), unzip, and **Load
+unpacked** in Chrome, Edge, or Firefox's `about:debugging`.
+
+### Android installation (requires your own developer signing)
+
+- **Firefox for Android:** package this `extension/` folder and sign it
+  with your own Mozilla AMO developer account:
+  `npx web-ext sign --api-key=<AMO_JWT_ISSUER> --api-secret=<AMO_JWT_SECRET> --source-dir=extension`
+  (see [Mozilla's extension-workshop signing docs](https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/)).
+  `manifest.json` already declares the `browser_specific_settings.gecko.id`
+  AMO requires for signing. This step needs credentials only you can
+  provide — it isn't something this codebase can do on your behalf.
+- **Edge for Android:** requires publishing through the Microsoft Edge
+  Add-ons store, under your own Microsoft Partner Center account. There is
+  no unpacked/sideload path on Android for Edge.
+- **Chrome for Android:** not installable — see the matrix above. This is
+  a platform limitation, not something InkframeScout can work around.
+
+### Device registration and sync
+
+Each browser you connect (via Settings → Extensions → InkframeScout →
+Generate Connection Code) is recorded as its own row in
+`extension_connections`, now carrying real `device_type` (`desktop` /
+`mobile`), `browser_name`, `browser_version`, and `extension_version` —
+reported honestly by that browser's own `navigator.userAgent` at connect
+time (`detectDeviceInfo()` in `browser-capabilities.js`), never guessed
+server-side. Settings → Extensions lists every connected device with this
+metadata so you can tell your desktop and phone connections apart.
+
+There is no device-to-device sync of any kind. Each connected browser talks
+only to your own InkFrame account's API — a clip captured on your phone and
+a clip captured on your laptop both land in the same account's
+`scout_clips` table server-side, which *is* the sync: cloud-mediated
+through your own account, never a direct connection between two browsers.
+
+### Offline queue on mobile
+
+The existing offline retry queue (`chrome.storage.local`, retried on next
+popup open — see "Two small additions" above) behaves identically on
+Android: a spotty mobile connection queues a captured clip locally and
+retries automatically the next time you open the popup, with no data loss
+in between.
+
+### Live testing status
+
+Desktop (Chrome, Edge, Firefox via `about:debugging`) has a documented
+"Load unpacked" path above that this codebase enables end-to-end, but
+actually clicking through it on a real desktop browser, and completing a
+real Android sideload/signing flow on a real device, both require hardware
+and accounts this build environment does not have — no results are claimed
+here that weren't actually run. If you complete either, please report back
+what worked so this matrix can be corrected from real results rather than
+documentation alone.
+
 ## Data flow
 
 ```

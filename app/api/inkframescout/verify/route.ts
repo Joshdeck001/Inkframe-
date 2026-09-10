@@ -15,12 +15,25 @@ export const OPTIONS = corsPreflight;
  * client-supplied user id.
  */
 export const POST = withCors(withJsonErrors(async (request: Request) => {
-  const { code } = await request.json();
+  const { code, device_type, browser_name, browser_version } = await request.json();
   if (typeof code !== "string" || !code) return NextResponse.json({ error: "code is required" }, { status: 400 });
 
   const service = createServiceClient();
   const resolved = await resolveConnection(service, code);
   if (!resolved) return NextResponse.json({ error: "That connection code is invalid, expired, or has been revoked." }, { status: 401 });
+
+  // Real device metadata, reported honestly by the connecting browser itself (see
+  // extension/lib/browser-capabilities.js's detectDeviceInfo()) — never guessed
+  // server-side. Lets one InkFrame account show every connected device (spec:
+  // "Device Registration") without a second table — a connection already IS a device.
+  await service
+    .from("extension_connections")
+    .update({
+      device_type: device_type === "mobile" || device_type === "desktop" ? device_type : null,
+      browser_name: typeof browser_name === "string" ? browser_name.slice(0, 50) : null,
+      browser_version: typeof browser_version === "string" ? browser_version.slice(0, 30) : null,
+    })
+    .eq("id", resolved.connectionId);
 
   const { data: userData } = await service.auth.admin.getUserById(resolved.userId);
 

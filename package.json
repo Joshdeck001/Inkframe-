@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "eslint .",
     "build:extension-zip": "tsx scripts/build-extension-zip.ts",
+    "build:extension": "tsx scripts/build-extension-zip.ts",
     "test:plan-tier": "tsx scripts/test-plan-tier.ts"
   },
   "dependencies": {

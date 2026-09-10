@@ -26,5 +26,11 @@
     "https://www.amazon.com/*",
     "https://play.google.com/*",
     "https://www.kobo.com/*"
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "inkframescout@inkframe.app",
+      "strict_min_version": "101.0"
+    }
+  }
 }

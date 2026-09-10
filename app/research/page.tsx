@@ -9,7 +9,8 @@ import ProjectPicker from "@/lib/ProjectPicker";
 import type { ResearchReport } from "@/lib/research-report";
 import { classifyEvidence } from "@/lib/research-evidence-labels";
 import { groupClipsByCanonicalBook, buildObservedSeries } from "@/lib/scout-matching";
-import { computeOpportunityRadar, scanMarket, type OpportunityRadar, type MarketScanResult } from "@/lib/scout-opportunity";
+import { computeOpportunitySignals, scanMarket, type OpportunitySignals, type MarketScanResult } from "@/lib/scout-opportunity";
+import { computeEvidenceCompleteness, computeFreshness, computeEvidenceQuality } from "@/lib/scout-evidence";
 
 export const dynamic = "force-dynamic";
 
@@ -827,6 +828,7 @@ type ScoutClip = {
   marketplace: string;
   title: string | null;
   author: string | null;
+  publisher: string | null;
   source_url: string;
   external_id: string | null;
   isbn: string | null;
@@ -853,7 +855,7 @@ type ScoutOpportunity = {
   competition_set_id: string | null;
   session_id: string | null;
   project_id: string | null;
-  score: OpportunityRadar | null;
+  score: OpportunitySignals | null;
   potential_audience: string | null;
   potential_positioning: string | null;
   potential_differentiation: string | null;
@@ -959,10 +961,12 @@ function ComparisonTable({ clips }: { clips: ScoutClip[] }) {
     ["Category rank", (c) => (c.category_rank != null ? `#${c.category_rank.toLocaleString()}` : "—")],
     ["Price", (c) => (c.price != null ? `$${c.price}` : "—")],
     ["Published", (c) => c.published_date ?? "—"],
+    ["Publisher", (c) => c.publisher ?? "—"],
     ["Rating", (c) => (c.rating != null ? String(c.rating) : "—")],
     ["Reviews", (c) => (c.review_count != null ? c.review_count.toLocaleString() : "—")],
     ["Category", (c) => c.category ?? "—"],
-    ["Clipped", (c) => new Date(c.clipped_at).toLocaleDateString()],
+    ["Sales", () => "Not available from captured marketplace evidence"],
+    ["Captured", (c) => new Date(c.clipped_at).toLocaleDateString()],
   ];
   return (
     <div style={{ overflowX: "auto", marginTop: "10px" }}>
@@ -991,25 +995,73 @@ function ComparisonTable({ clips }: { clips: ScoutClip[] }) {
   );
 }
 
-function OpportunityRadarDisplay({ radar }: { radar: OpportunityRadar }) {
-  const [showWhy, setShowWhy] = useState(false);
+const SIGNAL_COLOR: Record<string, string> = {
+  STRONG: "#3ddc9a",
+  MODERATE: "#4c8bff",
+  WEAK: "#ffc266",
+  UNCLEAR: "#8d96ab",
+  INSUFFICIENT_EVIDENCE: "#8d96ab",
+};
+
+/** Qualitative Opportunity Signals (v3) — never a single opaque "Opportunity = 87" number. */
+function OpportunitySignalsDisplay({ signals }: { signals: OpportunitySignals }) {
+  const [showWhy, setShowWhy] = useState<string | null>(null);
   return (
     <div className="checklist-panel" style={{ marginTop: "10px" }}>
-      <div style={{ fontWeight: 700 }}>Opportunity Score: {radar.overall != null ? `${radar.overall}/100` : "Not enough data yet"}</div>
-      <div className="hint">Confidence: {radar.confidence.replace(/_/g, " ")} · Calculation v{radar.calculationVersion}</div>
-      <button className="btn btn-secondary" style={{ marginTop: "8px" }} onClick={() => setShowWhy((v) => !v)}>{showWhy ? "Hide" : "Why this score?"}</button>
-      {showWhy && (
-        <div style={{ marginTop: "8px" }}>
-          {radar.dimensions.map((d) => (
-            <div key={d.label} className="check-row" style={{ alignItems: "flex-start" }}>
-              <span style={{ fontSize: "12px" }}>
-                <strong>{d.label}</strong>: {d.score != null ? `${d.score}/100` : "insufficient data"} ({d.confidence}) — {d.basis}
-              </span>
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Opportunity Signals</div>
+      <div className="hint" style={{ marginBottom: "10px" }}>
+        Sample: {signals.sample.booksAnalyzed} book(s) · {signals.sample.marketplaces.map(platformLabel).join(", ") || "no marketplace"}
+        {signals.sample.earliestCapture && signals.sample.latestCapture && (
+          <> · captured {new Date(signals.sample.earliestCapture).toLocaleDateString()} – {new Date(signals.sample.latestCapture).toLocaleDateString()}</>
+        )}
+        {" "}· Calculation v{signals.calculationVersion}
+      </div>
+      {signals.signals.map((s) => (
+        <div key={s.label} className="check-row" style={{ alignItems: "flex-start", flexDirection: "column", gap: "4px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px" }}>{s.label}</span>
+            <span style={{ color: SIGNAL_COLOR[s.status], fontWeight: 700, fontSize: "12px" }}>{s.status.replace(/_/g, " ")}</span>
+          </div>
+          <button className="btn btn-secondary" style={{ padding: "2px 8px" }} onClick={() => setShowWhy(showWhy === s.label ? null : s.label)}>
+            {showWhy === s.label ? "Hide" : "Why?"}
+          </button>
+          {showWhy === s.label && (
+            <div style={{ fontSize: "12px" }}>
+              <div><strong>Evidence:</strong> {s.evidence}</div>
+              <div><strong>Reasoning:</strong> {s.reasoning}</div>
+              <div className="hint">Confidence: {s.confidence}</div>
             </div>
-          ))}
+          )}
+        </div>
+      ))}
+      <p className="hint" style={{ marginTop: "8px" }}>{signals.disclaimer}</p>
+    </div>
+  );
+}
+
+/** Evidence Completeness / Freshness / Evidence Quality (v3 spec sections 8, 33, 34) — never a market score. */
+function EvidenceSummary({ clip }: { clip: ScoutClip }) {
+  const [expanded, setExpanded] = useState(false);
+  const completeness = computeEvidenceCompleteness(clip);
+  const freshness = computeFreshness(clip.clipped_at);
+  const quality = computeEvidenceQuality(clip);
+  return (
+    <div style={{ marginTop: "6px" }}>
+      <button className="btn btn-secondary" style={{ padding: "2px 8px", fontSize: "11px" }} onClick={() => setExpanded((v) => !v)}>
+        Evidence: {completeness.pct}% · {quality} · {freshness}
+      </button>
+      {expanded && (
+        <div style={{ marginTop: "6px", fontSize: "12px" }}>
+          <div>Evidence Completeness: {completeness.observedCount}/{completeness.totalExpected} fields observed ({completeness.pct}%)</div>
+          <div>Evidence Quality: {quality} · Freshness: {freshness} (captured {new Date(clip.clipped_at).toLocaleDateString()})</div>
+          <div className="hint" style={{ marginTop: "4px" }}>
+            {completeness.fields.map((f) => `${f.field}: ${f.status}`).join(" · ")}
+          </div>
+          <div style={{ marginTop: "6px" }}>
+            <strong>Sales:</strong> Not available from captured marketplace evidence. Ranking: {clip.bsr != null ? "Observed" : "Unavailable"}. Sales: Unknown.
+          </div>
         </div>
       )}
-      <p className="hint" style={{ marginTop: "8px" }}>{radar.disclaimer}</p>
     </div>
   );
 }
@@ -1098,7 +1150,7 @@ function MyClipsPanel({
         competitor evidence, save it to a Competition Set, watch it, or discard it.
       </p>
       {clips.length === 0 ? (
-        <p className="hint">No clips yet. Browse a supported marketplace page with InkframeScout and click &quot;Clip This Book&quot; to begin building market history.</p>
+        <p className="hint">No evidence captured yet. Browse a supported marketplace page with InkframeScout and click &quot;Capture Evidence&quot; to begin building market history.</p>
       ) : (
         <CrossPlatformInsights clips={clips} />
       )}
@@ -1134,6 +1186,7 @@ function MyClipsPanel({
                 </button>
                 <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
               </div>
+              <EvidenceSummary clip={clip} />
             </div>
           ))}
         </div>
@@ -1159,8 +1212,8 @@ function CompetitionSetsPanel({
   const [newLabel, setNewLabel] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comparing, setComparing] = useState<Set<string>>(new Set());
-  const [radar, setRadar] = useState<Record<string, OpportunityRadar>>({});
-  const [showRadarFor, setShowRadarFor] = useState<string | null>(null);
+  const [signals, setSignals] = useState<Record<string, OpportunitySignals>>({});
+  const [showSignalsFor, setShowSignalsFor] = useState<string | null>(null);
   const [creatingOpportunity, setCreatingOpportunity] = useState<string | null>(null);
 
   async function createSet() {
@@ -1183,16 +1236,16 @@ function CompetitionSetsPanel({
     return clips.filter((c) => ids.has(c.id));
   }
 
-  function runRadar(setId: string) {
-    setRadar((r) => ({ ...r, [setId]: computeOpportunityRadar(clipsForSet(setId)) }));
-    setShowRadarFor(setId);
+  function runSignals(setId: string) {
+    setSignals((r) => ({ ...r, [setId]: computeOpportunitySignals(clipsForSet(setId)) }));
+    setShowSignalsFor(setId);
   }
 
   async function saveOpportunity(setId: string, label: string) {
     if (!userId) return;
     setCreatingOpportunity(setId);
     const setClips = clipsForSet(setId);
-    const computed = radar[setId] ?? computeOpportunityRadar(setClips);
+    const computed = signals[setId] ?? computeOpportunitySignals(setClips);
     await supabase.from("scout_opportunities").insert({
       user_id: userId,
       title: label,
@@ -1227,32 +1280,35 @@ function CompetitionSetsPanel({
               <div style={{ marginTop: "10px" }}>
                 {setClips.length === 0 && <p className="hint">No books in this set yet.</p>}
                 {setClips.map((c) => (
-                  <div className="check-row" key={c.id}>
-                    <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                      <input
-                        type="checkbox"
-                        checked={comparing.has(c.id)}
-                        onChange={(e) => {
-                          const next = new Set(comparing);
-                          if (e.target.checked) next.add(c.id);
-                          else next.delete(c.id);
-                          setComparing(next);
-                        }}
-                      />
-                      {c.title || c.source_url} <span className="hint">({platformLabel(c.marketplace)})</span>
-                    </label>
-                    <button className="btn btn-secondary" style={{ padding: "2px 8px" }} onClick={() => removeClip(set.id, c.id)}>Remove</button>
+                  <div className="check-row" key={c.id} style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+                      <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={comparing.has(c.id)}
+                          onChange={(e) => {
+                            const next = new Set(comparing);
+                            if (e.target.checked) next.add(c.id);
+                            else next.delete(c.id);
+                            setComparing(next);
+                          }}
+                        />
+                        {c.title || c.source_url} <span className="hint">({platformLabel(c.marketplace)})</span>
+                      </label>
+                      <button className="btn btn-secondary" style={{ padding: "2px 8px" }} onClick={() => removeClip(set.id, c.id)}>Remove</button>
+                    </div>
+                    <EvidenceSummary clip={c} />
                   </div>
                 ))}
                 {comparing.size >= 2 && <ComparisonTable clips={setClips.filter((c) => comparing.has(c.id))} />}
                 <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
-                  <button className="btn btn-secondary" onClick={() => runRadar(set.id)} disabled={setClips.length === 0}>Opportunity Radar</button>
+                  <button className="btn btn-secondary" onClick={() => runSignals(set.id)} disabled={setClips.length === 0}>Opportunity Signals</button>
                   <button className="btn btn-secondary" onClick={() => saveOpportunity(set.id, set.label)} disabled={creatingOpportunity === set.id || setClips.length === 0}>
                     {creatingOpportunity === set.id ? "Saving…" : "Explore Opportunity"}
                   </button>
                   <button className="btn btn-secondary" onClick={() => deleteSet(set.id)}>Delete Set</button>
                 </div>
-                {showRadarFor === set.id && radar[set.id] && <OpportunityRadarDisplay radar={radar[set.id]} />}
+                {showSignalsFor === set.id && signals[set.id] && <OpportunitySignalsDisplay signals={signals[set.id]} />}
                 <NotesList scopeColumn="competition_set_id" scopeId={set.id} />
               </div>
             )}
@@ -1517,7 +1573,7 @@ function OpportunityWorkspacePanel({
           {o.market && <div className="hint" style={{ fontSize: "12px" }}>Market: {o.market}</div>}
           {o.score && (
             <div className="hint" style={{ fontSize: "12px", marginTop: "6px" }}>
-              Opportunity score: {o.score.overall != null ? `${o.score.overall}/100` : "insufficient data"} ({o.score.confidence})
+              {o.score.signals.map((s) => `${s.label}: ${s.status.replace(/_/g, " ")}`).join(" · ")}
             </div>
           )}
           {o.potential_audience && (
@@ -1533,7 +1589,7 @@ function OpportunityWorkspacePanel({
           )}
           <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
             <button className="btn btn-secondary" onClick={() => analyze(o)} disabled={analyzing === o.id || !o.competition_set_id}>
-              {analyzing === o.id ? "Analyzing…" : "What would you build instead?"}
+              {analyzing === o.id ? "Analyzing…" : "Differentiation Analysis"}
             </button>
             {!o.session_id ? (
               <button className="btn btn-secondary" onClick={() => startResearch(o)} disabled={starting === o.id}>
@@ -1571,7 +1627,7 @@ function InkframeScoutWorkspace({ onOpenSession }: { onOpenSession: (id: string)
     const [{ data: c }, { data: s }, { data: snaps }, { data: sets }, { data: mem }, { data: w }, { data: opps }] = await Promise.all([
       supabase
         .from("scout_clips")
-        .select("id, marketplace, title, author, source_url, external_id, isbn, price, bsr, category, category_rank, rating, review_count, published_date, clipped_at, status, snapshot_id")
+        .select("id, marketplace, title, author, publisher, source_url, external_id, isbn, price, bsr, category, category_rank, rating, review_count, published_date, clipped_at, status, snapshot_id")
         .neq("status", "discarded")
         .order("clipped_at", { ascending: false })
         .limit(300),

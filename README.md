@@ -2029,6 +2029,91 @@ environment. Every piece was verified at the unit/integration level
 real account and a loaded extension is still needed before calling this
 done end-to-end.
 
+## InkframeScout v3
+
+A fourth spec ("Evidence-First Market Intelligence Expansion") explicitly
+built on top of v2 rather than re-litigating it — it opened by naming
+the exact fixes to preserve (diacritics normalization, `browser_clip` →
+`OBSERVED`) and the exact features to keep declined (Automatic
+Detection, background scanning, a fabricated sales formula, an opaque
+Intelligence Score). Per its own "audit first" instruction, v3 was built
+as a genuine reframing of what already existed, not a rebuild: same
+tables, same capture flow, same API routes, mostly new *computation* and
+*presentation* on top.
+
+**What changed and why:**
+
+- **Opportunity Radar → Opportunity Signals.** v2's `Opportunity Score:
+  83/100` implied a precision the underlying evidence never supported —
+  exactly what v3's "No False Precision" section calls out. `lib/scout-
+  opportunity.ts` now returns qualitative signals (`STRONG`/`MODERATE`/
+  `WEAK`/`UNCLEAR`/`INSUFFICIENT_EVIDENCE`), each with `evidence`
+  (what was counted), `reasoning` (careful, non-causal language — "rank
+  improved between captured observations," never "sales increased"),
+  and its own `confidence`. **Demand Signal is always
+  `INSUFFICIENT_EVIDENCE`** — kept in the output on purpose (unlike v2,
+  which omitted it entirely) so the concept is visibly acknowledged
+  rather than silently missing, with an honest reason attached instead
+  of a fabricated number. `calculation_version` bumped to `2` since this
+  is a genuine format change, not a compatible extension.
+- **Evidence Completeness, Freshness, and Evidence Quality**
+  (`lib/scout-evidence.ts`) — three explicitly *not*-market-score
+  metrics the spec asked for by name. Completeness is computed against
+  each marketplace's own expected field set (Amazon's 11 fields
+  including BSR/category rank; Kobo and Google Play Books' 9 shared
+  fields) so a Kobo clip is never penalized for lacking a field only
+  Amazon publishes. Freshness uses named day-based thresholds (CURRENT/
+  RECENT/AGING/OLD); Evidence Quality combines both.
+- **Publisher** — one genuinely new field, extracted the same
+  label-scan way ISBN/BSR/publication-date already are (`extract.js`,
+  migration `0025`).
+- **Sales — explicitly stated as unavailable**, per the spec's own
+  required copy: "Not available from captured marketplace evidence.
+  Ranking: Observed/Unavailable. Sales: Unknown." Shown in both the new
+  per-clip `EvidenceSummary` and the Competition Set comparison table.
+- **Capture Selection** — a second, narrower capture action: reads only
+  text the user has already highlighted (`window.getSelection()`), via
+  one inline function call under the same `activeTab`/user-gesture model
+  as the full-page capture. No new content-script file, no new
+  permission, still exactly one explicit click.
+- **Relabeling, not renaming.** The primary button is now "Capture
+  Evidence" (was "Clip This Book") and the AI brainstorming action is
+  "Differentiation Analysis" (was "What would you build instead?") —
+  user-facing copy changes only. Underlying table/column/route names
+  (`scout_clips`, `/api/inkframescout/observations`, etc.) were
+  deliberately left alone: renaming already-shipped schema and APIs for
+  a copy change would be pure churn with real regression risk, and nothing
+  in the spec asked for that.
+
+**Explicitly not reintroduced** (v3's own section 2, honored): the
+Automatic Detection toggle, continuous/background scanning, unrestricted
+overlay injection, "Scan This Page" for multiple books automatically,
+a scraper-fleet health dashboard, a fabricated BSR-to-sales formula, exact
+sales claims, and an opaque single-number Intelligence Score.
+
+**Regression protection (spec section 40), verified with real tests, not
+just re-reading the code:** diacritics normalization (Café/Cafe still
+match), `browser_clip` → `OBSERVED`, ISBN-based canonical matching, and
+the full existing evidence-classification vocabulary (`user_provided`/
+`live_web`/`ai_inference` × confidence) — all re-asserted this round and
+passing.
+
+**Testing:** `tsc --noEmit`, `eslint` (repo-wide, zero new errors), a
+full production build, and real runtime tests covering both the
+regression suite above and the new v3 logic — which caught and fixed a
+real bug before shipping: the first version of `extractPublisher()`
+matched the ordinary English word "publisher" anywhere in body text
+(e.g. "No publisher info here" → fabricated publisher name "info
+here."), fixed by requiring a label-style `:`/`-` separator immediately
+after the word, the same way ISBN/BSR/date extraction already do.
+
+**Known limitations, stated plainly:** completeness/freshness/quality
+are computed at render time from already-captured data, not stored
+historically — a past Evidence Quality reading isn't preserved if the
+same clip's data changes. Live end-to-end testing against real Amazon/
+Google Play Books/Kobo pages still requires a real browser session and a
+live Supabase project, neither available in this sandboxed environment.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

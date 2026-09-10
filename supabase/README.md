@@ -170,6 +170,15 @@
      `opportunity_id`/`competition_set_id` so notes reuse the exact same
      table every other research path already writes to. See
      "InkframeScout Intelligence 2.0" in the root `README.md`.
+   - `supabase/migrations/0025_inkframescout_v3_evidence.sql` — adds
+     `scout_clips.publisher` (read the same label-scan way isbn/bsr/
+     published_date already are). Everything else in v3 — Evidence
+     Completeness, Freshness, Evidence Quality, and the Opportunity
+     Signals that replaced v2's numeric Opportunity Score — is computed
+     on the fly from data that already exists (`lib/scout-evidence.ts`,
+     `lib/scout-opportunity.ts`); `scout_opportunities.score` is already
+     a flexible jsonb column, so its shape could change without another
+     migration. See "InkframeScout v3" in the root `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

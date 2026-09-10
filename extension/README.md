@@ -2,7 +2,7 @@
 
 A real, installable browser extension — not a mockup, not a demo. It does
 **one thing**: when you're looking at a single book's page on Amazon,
-Google Play Books, or Kobo, and you click "Clip This Book," it reads the
+Google Play Books, or Kobo, and you click "Capture Evidence," it reads the
 publicly visible information on that page (title, author, price,
 category, rating, and platform-specific identifiers) and sends it to your
 own InkFrame account as one research clip.
@@ -60,6 +60,16 @@ InkFrame's API fails (a network error), the extracted JSON is queued in
 `chrome.storage.local` and retried the next time the popup opens. Neither
 touches a marketplace page; both only govern whether/when a capture the
 user already explicitly made gets delivered.
+
+A fourth spec ("v3 — Evidence-First Market Intelligence Expansion")
+reframed the extension as an evidence-capture tool rather than a
+scraper, and explicitly asked to preserve every v2 decision above rather
+than revisit them — confirmed still true, with regression tests to
+prove it. What v3 added: **publisher** extraction (same label-scan
+approach as ISBN/BSR/date), **Capture Selection** (reads only text
+already highlighted on the page, one inline call, still one click), and
+relabeled the primary button "Capture Evidence" (was "Clip This Book").
+See "InkframeScout v3" in the root `README.md`.
 
 ## Architecture
 

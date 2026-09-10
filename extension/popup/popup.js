@@ -24,6 +24,7 @@ const els = {
   snapshotSelect: document.getElementById("snapshot-select"),
   newSnapshotBtn: document.getElementById("new-snapshot-btn"),
   clipBtn: document.getElementById("clip-btn"),
+  captureSelectionBtn: document.getElementById("capture-selection-btn"),
   clipResult: document.getElementById("clip-result"),
   openInkframeBtn: document.getElementById("open-inkframe-btn"),
   disconnectBtn: document.getElementById("disconnect-btn"),
@@ -141,17 +142,20 @@ async function checkCurrentTab() {
     els.pageStatus.textContent = "Collection is paused — resume it from Settings → Extensions → InkframeScout.";
     els.pageStatus.classList.remove("supported");
     els.clipBtn.disabled = true;
+    els.captureSelectionBtn.disabled = true;
     return;
   }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.url && isSupportedUrl(tab.url)) {
-    els.pageStatus.textContent = "This page is supported — ready to clip.";
+    els.pageStatus.textContent = "This page is supported — ready to capture evidence.";
     els.pageStatus.classList.add("supported");
     els.clipBtn.disabled = false;
+    els.captureSelectionBtn.disabled = false;
   } else {
     els.pageStatus.textContent = "Not a supported book page (Amazon, Google Play Books, or Kobo).";
     els.pageStatus.classList.remove("supported");
     els.clipBtn.disabled = true;
+    els.captureSelectionBtn.disabled = true;
   }
 }
 
@@ -260,7 +264,66 @@ els.clipBtn.addEventListener("click", async () => {
     els.clipResult.hidden = false;
   } finally {
     els.clipBtn.disabled = false;
-    els.clipBtn.textContent = "Clip This Book";
+    els.clipBtn.textContent = "Capture Evidence";
+  }
+});
+
+/**
+ * "Capture Selection" (v3 spec section 6) — reads only text the user has
+ * already highlighted on the page, via a single inline function call
+ * under the same activeTab/user-gesture model as the full-page capture
+ * above. No separate content-script file needed: window.getSelection()
+ * is read once, at the moment of this click, nothing more.
+ */
+els.captureSelectionBtn.addEventListener("click", async () => {
+  els.clipResult.hidden = true;
+  const { apiBaseUrl, token } = await getStoredAuth();
+  if (!apiBaseUrl || !token) return;
+
+  els.captureSelectionBtn.disabled = true;
+  els.captureSelectionBtn.textContent = "Reading selection…";
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url) throw new Error("No active tab.");
+
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => window.getSelection()?.toString()?.trim() || null,
+    });
+    const selectedText = injection?.result;
+    if (!selectedText) throw new Error("Nothing is selected on this page — highlight some text first.");
+
+    const host = new URL(tab.url).hostname;
+    const marketplace = host.includes("amazon.") ? "amazon" : host.includes("play.google.com") ? "google_play_books" : "kobo";
+    const payload = {
+      marketplace,
+      source_url: tab.url,
+      title: selectedText.length > 120 ? `${selectedText.slice(0, 117)}…` : selectedText,
+      author: null,
+      raw_fields: { capture_type: "selection", selected_text: selectedText },
+      extension_version: "3.0.0",
+      snapshot_id: els.snapshotSelect.value || null,
+    };
+
+    const res = await fetch(`${apiBaseUrl}/api/inkframescout/observations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Could not save this selection.");
+
+    els.clipResult.textContent = "✓ Selection captured — review it in InkFrame Research.";
+    els.clipResult.className = "result success";
+    els.clipResult.hidden = false;
+    await refreshStatus(apiBaseUrl, token);
+  } catch (e) {
+    els.clipResult.textContent = e.message || "Could not capture this selection.";
+    els.clipResult.className = "result error";
+    els.clipResult.hidden = false;
+  } finally {
+    els.captureSelectionBtn.disabled = false;
+    els.captureSelectionBtn.textContent = "Capture Selection";
   }
 });
 

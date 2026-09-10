@@ -25,7 +25,7 @@ export const POST = withJsonErrors(async (request: Request) => {
 
   const body = await request.json();
   const {
-    marketplace, source_url, title, author, external_id, isbn, price, currency, category, rating, review_count,
+    marketplace, source_url, title, author, publisher, external_id, isbn, price, currency, category, rating, review_count,
     bsr, category_rank, published_date, extension_version, adapter_version, raw_fields, snapshot_id,
   } = body;
 
@@ -54,6 +54,7 @@ export const POST = withJsonErrors(async (request: Request) => {
       source_url,
       title: typeof title === "string" ? title.slice(0, 500) : null,
       author: typeof author === "string" ? author.slice(0, 300) : null,
+      publisher: typeof publisher === "string" ? publisher.slice(0, 300) : null,
       external_id: typeof external_id === "string" ? external_id.slice(0, 100) : null,
       isbn: typeof isbn === "string" ? isbn.slice(0, 20) : null,
       price: typeof price === "number" ? price : null,

@@ -18,11 +18,11 @@
   // observation always carries the exact adapter version that produced
   // it (spec: "Versioning" / "Historical records should retain the
   // version used to produce them").
-  const EXTENSION_VERSION = "2.1.0";
+  const EXTENSION_VERSION = "3.0.0";
   const ADAPTER_VERSIONS = {
-    amazon: "amazon-1.1.0",
-    google_play_books: "google_play_books-1.1.0",
-    kobo: "kobo-1.1.0",
+    amazon: "amazon-1.2.0",
+    google_play_books: "google_play_books-1.2.0",
+    kobo: "kobo-1.2.0",
   };
 
   function text(selectors) {
@@ -76,6 +76,21 @@
   }
 
   /**
+   * Same generic label-scan approach — "Publisher:" followed by a name,
+   * up to the next line break. Distinct from extractPublishedDate() above:
+   * that one specifically excludes "Publisher" via its own word-boundary
+   * guard, so the two never both claim the same text.
+   */
+  function extractPublisher() {
+    const bodyText = document.body.innerText || "";
+    // Requires a colon/dash separator right after the label — unlike ISBN/date/rank, "publisher"
+    // is also an ordinary English word, so a loose match risks turning any casual mention of it
+    // ("no publisher info here") into a fabricated publisher name.
+    const match = bodyText.match(/Publisher\s*[:\-]\s*([^\n]{2,80})/i);
+    return match ? match[1].trim() : null;
+  }
+
+  /**
    * Amazon's own "Best Sellers Rank" line, e.g. "#12,483 in Books (See
    * Top 100) ... #7 in Photography Textbooks". Only implemented for
    * Amazon — Kobo and Google Play Books don't publish an equivalent
@@ -112,6 +127,7 @@
       marketplace: "amazon",
       title: text(["#productTitle", "span#title", "h1#title"]),
       author: text(["#bylineInfo", ".author a", ".contributorNameID"]),
+      publisher: extractPublisher(),
       external_id: asinMatch ? asinMatch[1] : null,
       price,
       currency: priceText?.includes("$") ? "USD" : null,
@@ -138,6 +154,7 @@
       marketplace: "google_play_books",
       title: text(["h1[itemprop='name']", "h1", "[data-item-id] h1"]),
       author: text(["a[href*='/store/books/author']", ".author"]),
+      publisher: extractPublisher(),
       external_id: idMatch ? idMatch[1] : null,
       price: priceText ? Number(priceText.replace(/[^0-9.]/g, "")) || null : null,
       currency: null,
@@ -159,6 +176,7 @@
       marketplace: "kobo",
       title: text(["h1[data-testid='title']", "h1.title", "h1"]),
       author: text([".contributor-name", "a[href*='/author/']"]),
+      publisher: extractPublisher(),
       external_id: window.location.pathname.split("/").filter(Boolean).pop() || null,
       price: priceText ? Number(priceText.replace(/[^0-9.]/g, "")) || null : null,
       currency: null,

@@ -25,7 +25,7 @@ export const POST = withJsonErrors(async (request: Request) => {
   // RLS already scopes this to the caller's own clips — no separate ownership check needed.
   const { data: clips, error } = await supabase
     .from("scout_clips")
-    .select("title, author, category, price, rating, review_count")
+    .select("title, author, publisher, category, price, rating, review_count")
     .in("id", clip_ids)
     .not("title", "is", null);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -33,7 +33,11 @@ export const POST = withJsonErrors(async (request: Request) => {
 
   let result;
   try {
-    result = await generateDifferentiation(supabase, user.id, clips as { title: string; author: string | null; category: string | null; price: number | null; rating: number | null; review_count: number | null }[]);
+    result = await generateDifferentiation(
+      supabase,
+      user.id,
+      clips as { title: string; author: string | null; publisher: string | null; category: string | null; price: number | null; rating: number | null; review_count: number | null }[]
+    );
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Could not generate differentiation analysis." }, { status: 502 });
   }

@@ -15,6 +15,7 @@ import { generateStructured, resolvePreferredProviderForUser, type ToolSpec } fr
 export type DifferentiationEvidence = {
   title: string;
   author: string | null;
+  publisher: string | null;
   category: string | null;
   price: number | null;
   rating: number | null;
@@ -70,7 +71,7 @@ export async function generateDifferentiation(supabase: SupabaseClient, userId: 
   const facts = evidence
     .map(
       (e, i) =>
-        `Book ${i + 1}: "${e.title}"${e.author ? ` by ${e.author}` : ""}` +
+        `Book ${i + 1}: "${e.title}"${e.author ? ` by ${e.author}` : ""}${e.publisher ? ` (publisher: ${e.publisher})` : ""}` +
         `${e.category ? ` — category: ${e.category}` : ""}${e.price != null ? ` — price: $${e.price}` : ""}` +
         `${e.rating != null ? ` — rating: ${e.rating}` : ""}${e.review_count != null ? ` — review count: ${e.review_count}` : ""}`
     )

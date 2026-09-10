@@ -15,19 +15,25 @@ export const maxDuration = 60;
  * the author can compare versions as more evidence gets added over time.
  */
 export const POST = withJsonErrors(async (request: Request) => {
-  const { project_id } = await request.json();
-  if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 });
+  const { project_id, session_id } = await request.json();
+  if (!project_id && !session_id) return NextResponse.json({ error: "project_id or session_id is required" }, { status: 400 });
 
   const supabase = await createClient();
   const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
   if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
-  const { data: project } = await supabase.from("projects").select("id").eq("id", project_id).maybeSingle();
-  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (project_id) {
+    const { data: project } = await supabase.from("projects").select("id").eq("id", project_id).maybeSingle();
+    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  if (session_id) {
+    const { data: session } = await supabase.from("research_sessions").select("id").eq("id", session_id).maybeSingle();
+    if (!session) return NextResponse.json({ error: "Research session not found" }, { status: 404 });
+  }
 
   let report;
   try {
-    report = await generateResearchReport(supabase, project_id);
+    report = await generateResearchReport(supabase, { projectId: project_id, sessionId: session_id });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Report generation failed." }, { status: 502 });
   }
@@ -35,7 +41,8 @@ export const POST = withJsonErrors(async (request: Request) => {
   const { data: saved, error: insertError } = await supabase
     .from("research_reports")
     .insert({
-      project_id,
+      project_id: project_id ?? null,
+      session_id: session_id ?? null,
       sections: report.sections,
       overall_assessment: report.overall_assessment,
       confidence_level: report.confidence_level,

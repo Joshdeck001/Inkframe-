@@ -109,6 +109,17 @@
      `cancelled` alongside the original four). See "Publishing Control
      Center" in the root `README.md` for why this reuses `publishing_jobs`
      instead of a second job table.
+   - `supabase/migrations/0019_research_sessions.sql` — adds
+     `research_sessions` (a standalone, pre-project research unit — topic,
+     mode, platforms, resumable `stages`, optional `project_id`) and
+     `research_findings` (the real computed frequency/cluster/gap/
+     opportunity-score/concepts output per session). Widens
+     `competitor_research`/`keyword_research`/`category_research`/
+     `research_notes`/`research_reports` to optionally belong to a session
+     instead of only ever a project (`project_id` now nullable, new
+     `session_id` column, a check that at least one is set) — the exact
+     same evidence/report tables from `0016`, not a second schema. See
+     "Research Intelligence" in the root `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

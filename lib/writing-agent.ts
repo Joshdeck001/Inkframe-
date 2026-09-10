@@ -4,6 +4,7 @@ import { getPausedProjectIds } from "@/lib/production-paused";
 import { generateText, modelUsedLabel, resolvePreferredProvider } from "@/lib/ai-client";
 import { isStructuredBookType, getDesignFamily, writingGuidanceFor } from "@/lib/book-format";
 import { storyBibleToPromptFacts, type StoryBible } from "@/lib/story-bible";
+import { fetchAcceptedResearchFacts } from "@/lib/research-context";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -67,11 +68,12 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     .eq("id", nextChapter.id);
   await supabase.from("projects").update({ status: "WRITING" }).eq("id", project.id);
 
-  const [{ data: identity }, { data: audience }, { data: style }, { data: storyBible }, preferredProvider] = await Promise.all([
+  const [{ data: identity }, { data: audience }, { data: style }, { data: storyBible }, researchFacts, preferredProvider] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
     supabase.from("project_audience").select("*").eq("project_id", project.id).single(),
     supabase.from("project_style").select("*").eq("project_id", project.id).single(),
     supabase.from("story_bible").select("*").eq("project_id", project.id).maybeSingle(),
+    fetchAcceptedResearchFacts(supabase, project.id),
     resolvePreferredProvider(supabase, project.id),
   ]);
 
@@ -100,6 +102,8 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     style?.additional_instructions ? `Additional instructions: ${style.additional_instructions}` : null,
     "",
     ...storyBibleToPromptFacts(storyBible as Partial<StoryBible> | null),
+    "",
+    ...researchFacts,
     "",
     `Chapter ${nextChapter.chapter_number}: ${nextChapter.title}`,
     `Objective: ${nextChapter.objective}`,

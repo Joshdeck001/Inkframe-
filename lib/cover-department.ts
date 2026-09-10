@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPausedProjectIds } from "@/lib/production-paused";
 import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { generateImage } from "@/lib/image-client";
+import { fetchAcceptedResearchFacts } from "@/lib/research-context";
 
 const COVER_TOOL: ToolSpec = {
   name: "generate_cover_concepts",
@@ -74,13 +75,18 @@ export async function runCoverDepartmentTick(supabase: SupabaseClient): Promise<
     .maybeSingle();
 
   if (!coverRow || !Array.isArray(coverRow.concepts) || coverRow.concepts.length === 0) {
-    const { data: identity } = await supabase.from("project_identity").select("*").eq("project_id", project.id).single();
+    const [{ data: identity }, researchFacts] = await Promise.all([
+      supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
+      fetchAcceptedResearchFacts(supabase, project.id),
+    ]);
 
     const facts = [
       `Book type: ${project.book_type}`,
       identity?.working_title ? `Title: ${identity.working_title}` : null,
       identity?.subtitle ? `Subtitle: ${identity.subtitle}` : null,
       identity?.initial_idea ? `Idea: ${identity.initial_idea}` : null,
+      "",
+      ...researchFacts,
     ]
       .filter(Boolean)
       .join("\n");

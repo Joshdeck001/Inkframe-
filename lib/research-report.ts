@@ -6,19 +6,26 @@ const ASSESSMENTS = ["very_promising", "promising", "moderate", "high_competitio
 const CONFIDENCE = ["low", "medium", "high", "insufficient_data"] as const;
 
 export type ResearchReportSections = {
+  executive_summary: string;
   market_overview: string;
   niche_assessment: string;
   audience: string;
+  platform_analysis: string;
   competitor_landscape: string;
   review_insights: string;
   market_gaps: string;
   keyword_opportunities: string;
+  keyword_frequency: string;
+  title_patterns: string;
   category_opportunities: string;
   pricing_positioning: string;
+  trend_signals: string;
+  bundle_and_series_opportunities: string;
   risks: string;
   opportunities: string;
   recommended_angle: string;
   differentiation_strategy: string;
+  next_actions: string;
   final_recommendation: string;
 };
 
@@ -38,28 +45,43 @@ const REPORT_TOOL: ToolSpec = {
       sections: {
         type: "object",
         properties: {
+          executive_summary: { type: "string", description: "3-5 sentence summary of the whole investigation and its headline finding." },
           market_overview: { type: "string" },
           niche_assessment: { type: "string" },
           audience: { type: "string" },
+          platform_analysis: {
+            type: "string",
+            description: "Only distinguish per-platform (Amazon/Google Play/Kobo) conclusions where the evidence given actually says which platform it came from — otherwise say plainly that findings are general web/AI-knowledge, not platform-specific.",
+          },
           competitor_landscape: { type: "string", description: "Synthesize ONLY from the competitor rows given — say so plainly if none were provided." },
           review_insights: { type: "string", description: "Aggregate patterns from the review-related fields given, never a fabricated quote." },
-          market_gaps: { type: "string", description: "A gap must be justified by the evidence given, not just 'the AI can't think of a competitor'." },
+          market_gaps: { type: "string", description: "A gap must be justified by the evidence given, not just 'the AI can't think of a competitor'. Reference the computed gap list if provided." },
           keyword_opportunities: { type: "string" },
+          keyword_frequency: { type: "string", description: "Reference the ACTUAL computed frequency numbers given (occurrences/corpus size/percentage) — never restate them differently or invent additional ones." },
+          title_patterns: { type: "string", description: "Describe patterns only from the actual competitor titles given, or say there weren't enough titles to find a pattern." },
           category_opportunities: { type: "string" },
           pricing_positioning: { type: "string" },
+          trend_signals: { type: "string", description: "Only claim a trend direction (rising/stable/declining/uncertain) when the evidence actually supports it — default to 'uncertain' rather than guessing." },
+          bundle_and_series_opportunities: {
+            type: "string",
+            description: "Only recommend combining topics into one product when the evidence shows they serve overlapping reader intent — never just to pad word count. Explain who it's for and what the reader gains.",
+          },
           risks: { type: "string" },
           opportunities: { type: "string" },
           recommended_angle: { type: "string" },
           differentiation_strategy: { type: "string" },
+          next_actions: { type: "string", description: "Concrete next steps the author could take — e.g. 'add more competitor rows', 'run keyword research', 'approve an opportunity and create a project'." },
           final_recommendation: {
             type: "string",
-            description: "Use evidence-based language ('the available evidence suggests', 'additional research recommended') — never guarantee success.",
+            description: "Use evidence-based language ('the available evidence suggests', 'additional research recommended') — never guarantee success or sales.",
           },
         },
         required: [
-          "market_overview", "niche_assessment", "audience", "competitor_landscape", "review_insights",
-          "market_gaps", "keyword_opportunities", "category_opportunities", "pricing_positioning", "risks",
-          "opportunities", "recommended_angle", "differentiation_strategy", "final_recommendation",
+          "executive_summary", "market_overview", "niche_assessment", "audience", "platform_analysis",
+          "competitor_landscape", "review_insights", "market_gaps", "keyword_opportunities", "keyword_frequency",
+          "title_patterns", "category_opportunities", "pricing_positioning", "trend_signals",
+          "bundle_and_series_opportunities", "risks", "opportunities", "recommended_angle",
+          "differentiation_strategy", "next_actions", "final_recommendation",
         ],
       },
       overall_assessment: {
@@ -68,83 +90,166 @@ const REPORT_TOOL: ToolSpec = {
         description: "A qualitative label only, justified by the evidence given. Use 'insufficient_data' honestly when little evidence was provided — never inflate confidence to seem more useful.",
       },
       confidence_level: { type: "string", enum: [...CONFIDENCE] },
-      evidence_summary: { type: "string", description: "Plainly state how much real evidence (competitor/keyword/category rows, live search results) was actually available versus how much of this report is AI synthesis." },
+      evidence_summary: { type: "string", description: "Plainly state how much real evidence (competitor/keyword/category rows, live search results, computed frequency/gap/opportunity data) was actually available versus how much of this report is AI synthesis." },
     },
     required: ["sections", "overall_assessment", "confidence_level", "evidence_summary"],
   },
 };
 
-/**
- * Builds a research report strictly from what's actually in the
- * database — the competitor/keyword/category rows the author entered
- * themselves, plus a live web search attempt that's included only if a
- * provider is actually configured (lib/web-research-client.ts). The
- * model is never asked to invent competitors or numbers; when little or
- * no evidence exists, the honest answer is 'insufficient_data', not a
- * plausible-sounding guess. Never computes a numeric score — see the
- * migration's comment on why that would be fabricated data.
- */
-export async function generateResearchReport(supabase: SupabaseClient, projectId: string): Promise<ResearchReport> {
-  const [{ data: project }, { data: identity }, { data: audience }, { data: competitors }, { data: keywords }, { data: categories }, { data: notes }] =
-    await Promise.all([
-      supabase.from("projects").select("book_type").eq("id", projectId).single(),
-      supabase.from("project_identity").select("working_title, subtitle, initial_idea").eq("project_id", projectId).maybeSingle(),
-      supabase.from("project_audience").select("target_audience, core_promise").eq("project_id", projectId).maybeSingle(),
-      supabase.from("competitor_research").select("*").eq("project_id", projectId),
-      supabase.from("keyword_research").select("*").eq("project_id", projectId),
-      supabase.from("category_research").select("*").eq("project_id", projectId),
-      supabase.from("research_notes").select("research_type, content, source_type").eq("project_id", projectId),
-    ]);
+type EvidenceRow = Record<string, unknown>;
 
-  const searchQuery = [identity?.working_title, project?.book_type, audience?.target_audience].filter(Boolean).join(" ");
-  const webResult = searchQuery ? await searchWeb(searchQuery) : { available: false as const, reason: "No title/audience set yet to search for." };
+async function fetchEvidence(supabase: SupabaseClient, filterCol: "project_id" | "session_id", id: string) {
+  const [{ data: competitors }, { data: keywords }, { data: categories }, { data: notes }] = await Promise.all([
+    supabase.from("competitor_research").select("*").eq(filterCol, id),
+    supabase.from("keyword_research").select("*").eq(filterCol, id),
+    supabase.from("category_research").select("*").eq(filterCol, id),
+    supabase.from("research_notes").select("research_type, content, source_type").eq(filterCol, id),
+  ]);
+  return {
+    competitors: (competitors ?? []) as EvidenceRow[],
+    keywords: (keywords ?? []) as EvidenceRow[],
+    categories: (categories ?? []) as EvidenceRow[],
+    notes: (notes ?? []) as EvidenceRow[],
+  };
+}
 
-  const evidenceBlock = [
-    `Book type: ${project?.book_type ?? "unknown"}`,
-    identity?.working_title ? `Working title: ${identity.working_title}` : null,
-    identity?.subtitle ? `Subtitle: ${identity.subtitle}` : null,
-    identity?.initial_idea ? `Idea: ${identity.initial_idea}` : null,
-    audience?.target_audience ? `Target audience: ${audience.target_audience}` : null,
-    audience?.core_promise ? `Core promise: ${audience.core_promise}` : null,
+function evidenceBlockFrom(
+  header: string[],
+  competitors: EvidenceRow[],
+  keywords: EvidenceRow[],
+  categories: EvidenceRow[],
+  notes: EvidenceRow[],
+  webResult: Awaited<ReturnType<typeof searchWeb>> | null,
+  computed: string[] = []
+): string {
+  return [
+    ...header,
     "",
-    `COMPETITOR EVIDENCE PROVIDED (${competitors?.length ?? 0} row(s)):`,
-    ...(competitors ?? []).map(
+    `COMPETITOR EVIDENCE PROVIDED (${competitors.length} row(s)):`,
+    ...competitors.map(
       (c) =>
         `- "${c.title}"${c.author ? ` by ${c.author}` : ""} [${c.source_type}]: price=${c.price ?? "?"}, rating=${c.rating ?? "?"}, reviews=${c.review_count ?? "?"}, ` +
-        `complaints="${c.recurring_complaints ?? ""}", praise="${c.recurring_praise ?? ""}", gap="${c.content_gap ?? ""}"`
+        `complaints="${c.recurring_complaints ?? ""}", praise="${c.recurring_praise ?? ""}", gap="${c.content_gap ?? ""}", strengths="${c.strengths ?? ""}"`
     ),
-    competitors?.length ? null : "(none provided — do not invent competitors)",
+    competitors.length ? null : "(none provided — do not invent competitors)",
     "",
-    `KEYWORD EVIDENCE PROVIDED (${keywords?.length ?? 0} row(s)):`,
-    ...(keywords ?? []).map((k) => `- "${k.keyword}" [${k.source_type}]: demand=${k.demand_signal ?? "?"}, competition=${k.competition_signal ?? "?"}`),
-    keywords?.length ? null : "(none provided — say DATA NOT AVAILABLE rather than inventing search volumes)",
+    `KEYWORD EVIDENCE PROVIDED (${keywords.length} row(s)):`,
+    ...keywords.map((k) => `- "${k.keyword}" [${k.source_type}]: demand=${k.demand_signal ?? "?"}, competition=${k.competition_signal ?? "?"}`),
+    keywords.length ? null : "(none provided — say DATA NOT AVAILABLE rather than inventing search volumes)",
     "",
-    `CATEGORY EVIDENCE PROVIDED (${categories?.length ?? 0} row(s)):`,
-    ...(categories ?? []).map((c) => `- "${c.category_name}" [${c.source_type}]: ${c.rationale ?? ""}`),
-    categories?.length ? null : "(none provided)",
+    `CATEGORY EVIDENCE PROVIDED (${categories.length} row(s)):`,
+    ...categories.map((c) => `- "${c.category_name}" [${c.source_type}]: ${c.rationale ?? ""}`),
+    categories.length ? null : "(none provided)",
     "",
-    `PRIOR AI-INFERENCE NOTES (already labeled as not live data):`,
-    ...(notes ?? []).map((n) => `- [${n.research_type}] ${n.content?.slice(0, 300) ?? ""}`),
+    "PRIOR AI-INFERENCE NOTES (already labeled as not live data):",
+    ...notes.map((n) => `- [${n.research_type}] ${String(n.content ?? "").slice(0, 300)}`),
+    "",
+    ...computed,
     "",
     "LIVE WEB SEARCH:",
-    webResult.available
-      ? webResult.results.map((r) => `- ${r.title} (${r.url}): ${r.snippet}`).join("\n") || "(search ran, no results returned)"
-      : `NOT AVAILABLE — ${webResult.reason}`,
+    webResult
+      ? webResult.available
+        ? webResult.results.map((r) => `- ${r.title} (${r.url}): ${r.snippet}`).join("\n") || "(search ran, no results returned)"
+        : `NOT AVAILABLE — ${webResult.reason}`
+      : "NOT ATTEMPTED for this report.",
   ]
     .filter((l) => l !== null)
     .join("\n");
+}
+
+/**
+ * Builds a research report strictly from what's actually in the
+ * database. Two scopes, one function, one tool schema: `projectId` alone
+ * is the original behavior (a book project's own evidence rows) —
+ * unchanged for every existing caller. `sessionId` additionally pulls a
+ * standalone research session's evidence and, when present, the real
+ * computed frequency/gap/opportunity numbers from research_findings
+ * (lib/research-frequency.ts / lib/research-gaps.ts /
+ * lib/research-opportunity.ts) so the AI is synthesizing prose around
+ * numbers that were actually calculated, never inventing them itself.
+ */
+export async function generateResearchReport(
+  supabase: SupabaseClient,
+  scope: { projectId?: string; sessionId?: string }
+): Promise<ResearchReport> {
+  const { projectId, sessionId } = scope;
+  if (!projectId && !sessionId) throw new Error("generateResearchReport requires a projectId or sessionId.");
+
+  const [projectEvidence, sessionEvidence] = await Promise.all([
+    projectId ? fetchEvidence(supabase, "project_id", projectId) : null,
+    sessionId ? fetchEvidence(supabase, "session_id", sessionId) : null,
+  ]);
+
+  const competitors = [...(projectEvidence?.competitors ?? []), ...(sessionEvidence?.competitors ?? [])];
+  const keywords = [...(projectEvidence?.keywords ?? []), ...(sessionEvidence?.keywords ?? [])];
+  const categories = [...(projectEvidence?.categories ?? []), ...(sessionEvidence?.categories ?? [])];
+  const notes = [...(projectEvidence?.notes ?? []), ...(sessionEvidence?.notes ?? [])];
+
+  let header: string[] = [];
+  let preferredProvider: Awaited<ReturnType<typeof resolvePreferredProvider>> = undefined;
+  let searchQuery = "";
+
+  if (projectId) {
+    const [{ data: project }, { data: identity }, { data: audience }] = await Promise.all([
+      supabase.from("projects").select("book_type").eq("id", projectId).single(),
+      supabase.from("project_identity").select("working_title, subtitle, initial_idea").eq("project_id", projectId).maybeSingle(),
+      supabase.from("project_audience").select("target_audience, core_promise").eq("project_id", projectId).maybeSingle(),
+    ]);
+    header = [
+      `Book type: ${project?.book_type ?? "unknown"}`,
+      identity?.working_title ? `Working title: ${identity.working_title}` : null,
+      identity?.subtitle ? `Subtitle: ${identity.subtitle}` : null,
+      identity?.initial_idea ? `Idea: ${identity.initial_idea}` : null,
+      audience?.target_audience ? `Target audience: ${audience.target_audience}` : null,
+      audience?.core_promise ? `Core promise: ${audience.core_promise}` : null,
+    ].filter((l): l is string => l !== null);
+    searchQuery = [identity?.working_title, project?.book_type, audience?.target_audience].filter(Boolean).join(" ");
+    preferredProvider = await resolvePreferredProvider(supabase, projectId);
+  }
+
+  let computed: string[] = [];
+  if (sessionId) {
+    const { data: session } = await supabase.from("research_sessions").select("topic, mode, platforms").eq("id", sessionId).maybeSingle();
+    header.push(
+      `Research topic: ${session?.topic || "(no topic given — general opportunity discovery)"}`,
+      `Research mode: ${session?.mode ?? "full_publishing_research"}`,
+      `Platforms of interest (as stated by the user, not necessarily all reached live): ${(session?.platforms ?? []).join(", ")}`
+    );
+    searchQuery = searchQuery || session?.topic || "";
+
+    const { data: findings } = await supabase.from("research_findings").select("*").eq("session_id", sessionId).maybeSingle();
+    if (findings) {
+      computed = [
+        "COMPUTED EVIDENCE (real deterministic calculations — cite these numbers exactly, never restate differently):",
+        `Keyword clusters found: ${(findings.keyword_clusters as { label: string; keywords: string[] }[]).length}`,
+        ...(findings.keyword_clusters as { label: string; keywords: string[] }[]).map((c) => `  - Cluster "${c.label}": ${c.keywords.join(", ")}`),
+        `Top word/phrase frequency: ${JSON.stringify((findings.frequency as { top?: unknown }).top ?? findings.frequency).slice(0, 1500)}`,
+        `Content gaps found (${(findings.gaps as unknown[]).length}): ${JSON.stringify(findings.gaps).slice(0, 1500)}`,
+        `Opportunity score: ${JSON.stringify(findings.opportunity_score).slice(0, 1000)}`,
+        findings.concepts && (findings.concepts as unknown[]).length
+          ? `Recommended concepts already generated: ${JSON.stringify(findings.concepts).slice(0, 2000)}`
+          : "No concepts generated yet.",
+      ];
+    }
+  }
+
+  const webResult = searchQuery ? await searchWeb(searchQuery) : { available: false as const, reason: "No topic/title set yet to search for." };
+
+  const evidenceBlock = evidenceBlockFrom(header, competitors, keywords, categories, notes, webResult, computed);
 
   const { output } = await generateStructured<ResearchReport>({
     system:
       "You are InkFrame's Research Department, building an evidence-based research report. Use ONLY the " +
-      "evidence given below — real competitor/keyword/category rows the author entered, and live web search " +
-      "results only if marked available. Never invent competitors, review quotes, search volumes, or sales " +
-      "data. Where evidence is thin, say so plainly and use 'insufficient_data' rather than a confident-" +
-      "sounding guess. Call the build_research_report tool.",
+      "evidence given below — real competitor/keyword/category rows, computed frequency/gap/opportunity " +
+      "numbers, and live web search results only if marked available. Never invent competitors, review " +
+      "quotes, search volumes, sales data, or trend directions not supported by the evidence. Where evidence " +
+      "is thin, say so plainly and use 'insufficient_data' rather than a confident-sounding guess. Never " +
+      "claim or imply a guaranteed sales outcome — frame everything as decision support. Call the " +
+      "build_research_report tool.",
     userContent: evidenceBlock,
     tool: REPORT_TOOL,
-    maxTokens: 3000,
-    preferredProvider: await resolvePreferredProvider(supabase, projectId),
+    maxTokens: 4500,
+    preferredProvider,
   });
 
   return output;

@@ -1384,6 +1384,138 @@ block the run, hardcover is never marked ready, and a fake-Supabase KDP
 package build produces the real `01-06` folder structure with real saved
 prices (never a suggestion) in `05-Pricing/pricing.json`.
 
+## Research Intelligence: a staged agent, not a chat box
+
+The next spec (44 sections) asked to turn `/research` into a full "AI
+Publishing Intelligence System" — market/competitor/keyword/trend
+research, opportunity scoring, gap detection, series/bundle discovery,
+background deep-research jobs, and hooks into Writing/Metadata/Cover/
+Publishing. This is the largest single spec of the session; the scope
+notes below say plainly what got built at real depth versus what was
+declined or deliberately left for a later round, rather than thinning
+every one of the 44 sections into something shallow.
+
+**Audited first.** `/research` already had a real foundation, not a
+placeholder: `competitor_research`/`keyword_research`/`category_research`
+tables with `source_type`/`confidence` provenance tracking, a real (if
+unconfigured) Brave Search adapter (`lib/web-research-client.ts`) that
+honestly reports "unavailable" rather than pretending to have searched,
+and an evidence-only report generator (`lib/research-report.ts`) that
+refuses to invent competitors or numbers. What was missing: everything
+tying research to a *topic* rather than an already-existing book,
+anything computed instead of hand-typed, background processing, and any
+connection to Writing/Metadata/Cover beyond a human copy-pasting.
+
+**One evidence schema, now usable before a project exists.**
+`research_sessions` (migration `0019`) is the new standalone research
+unit the spec's "Research → Approved Opportunity → Create Book Project"
+flow needs — but it does NOT introduce a second evidence schema.
+`competitor_research`/`keyword_research`/`category_research`/
+`research_notes`/`research_reports` are the exact same tables from
+`0016`, now able to belong to a session instead of only a project. When
+a session's opportunity is approved into a real project
+(`/api/research/create-project`), those rows get `project_id` backfilled
+and keep `session_id` for lineage — so the pre-existing project-scoped
+research UI (kept, unchanged, under "research tied to an existing book
+project") and the new session-based workspace both read the same rows,
+never two disconnected research histories.
+
+**Real computation, not more AI guessing.** Three new pure, unit-tested
+modules do the actual "investigation" math with zero AI calls:
+- `lib/research-frequency.ts` — real word/bigram/trigram frequency across
+  whatever titles/keywords/snippets were actually collected (spec's own
+  "Phrase: 'second chance', Occurrences: 42, Books analyzed: 100" example,
+  computed for real), plus deterministic keyword clustering (a union-find
+  over shared significant words — two keywords cluster only if they
+  actually share a word, never an AI's guess at "feels related").
+- `lib/research-gaps.ts` — a real set comparison between keyword-cluster
+  demand and what competitors are recorded as covering; a gap only
+  surfaces when it's grounded in real entered data.
+- `lib/research-opportunity.ts` — a transparent 0-100 opportunity score
+  where every dimension is a capped function of a real count (competitors
+  found, clusters formed, gaps detected) with its basis stated in plain
+  English, never an AI-invented number, and a disclaimer that it's
+  decision support, not a sales prediction (spec sections 12/34).
+
+**A staged agent, verifiably not one giant prompt.**
+`lib/research-agent.ts` breaks the investigation into six independently
+callable stages — discovery (real web search), extraction (AI, but
+strictly grounded in real search results or clearly labeled AI-inference
+when none exist), analysis (pure computation, no AI), concepts (AI, but
+every rationale bullet must cite one of the stage-3 numbers), report
+(the evidence-only generator, now extended to 21 sections including the
+new frequency/gap/trend/bundle-and-series sections), and finalize.
+`lib/research-department.ts` advances exactly one stage of one session
+per tick — the same background-job shape every other department in this
+app already uses (`lib/kdp-preparation-department.ts`,
+`lib/audiobook-department.ts`) — so "start Deep Research and leave" (spec
+section 36) needed zero new job infrastructure, and a failed stage
+retries from itself rather than redoing completed work.
+
+**Research → Book Project / Writing / Metadata / Cover.**
+`/api/research/create-project` is the one real bridge from an accepted
+opportunity concept to a new book project (prepopulating
+`project_identity`/`project_scope`/`project_audience`, same rows the New
+Book wizard itself writes) — status stays `IDEA`, so nothing gets queued
+for writing automatically; the author still goes through the wizard.
+Downstream, `lib/research-context.ts` is a single shared lookup
+(`fetchAcceptedResearchFacts`) that `lib/writing-agent.ts`,
+`lib/metadata-department.ts`, and `lib/cover-department.ts` each call —
+reusing the exact `story_bible` prompt-splicing precedent from earlier
+this session. The approval gate here is the report's own existing
+Accept/Reject/Needs-More-Research status (already built): only an
+*accepted* report's findings ever reach a prompt, so a draft or rejected
+report is invisible to Writing/Metadata/Cover, exactly as if it didn't
+exist.
+
+**What was scoped down, and why** (declined or deferred, not silently
+dropped):
+- **Local/desktop research agent (section 31).** InkFrame has no desktop
+  companion app at all — it's a Next.js web app. Building a "Secure Local
+  Research Agent" protocol for a product surface that doesn't exist would
+  be pure speculative scaffolding with no way to verify it works, which is
+  exactly the "fake/placeholder functionality" this project's own rules
+  forbid. The existing web research layer (Brave Search, permitted access
+  only, honest about unavailability) is the real version of section 30's
+  actual requirements; a genuine desktop/browser-extension agent would be
+  a new product surface, out of scope here.
+- **Amazon direct access.** Unchanged from the KDP round's research:
+  Amazon's Conditions of Use bar automated access. Nothing here scrapes
+  Amazon; research relies on general web search (when configured),
+  user-provided data, and clearly-labeled AI inference.
+- **Per-platform live comparison (section 19).** The web search layer is
+  general web, not Amazon/Google Play/Kobo-specific — there's no way to
+  honestly produce "Amazon: Strong, Kobo: Strong" verdicts without real
+  per-platform data sources. `platforms` is recorded as what the user
+  said they care about, and the report is instructed to only make
+  platform-specific claims when the evidence actually supports one.
+- **Visual competitor-cover analysis (section 7).** No vision-model
+  pipeline exists for arbitrary scraped images. Cover-pattern research
+  stays text-based (positioning/strengths fields); "Send to Cover" passes
+  the accepted report's textual positioning into Cover Studio's existing
+  prompt, not a new image-analysis feature.
+- **Per-finding approval checkboxes (section 37).** Approval happens at
+  the whole-report level via the existing Accept/Reject/Needs-More-
+  Research status, not a granular "☑ keyword findings ☑ positioning"
+  selector — building real per-finding selection state would need its own
+  schema for a marginal gain over report-level approval, which already
+  prevents any unverified research from silently reaching a project.
+- **Hierarchical "Research Projects" grouping multiple sessions under one
+  topic (section 28).** Shipped as flat Research History (section 27)
+  instead — a real grouping UI is a reasonable follow-up, not attempted
+  here to avoid a half-built hierarchy.
+
+Verified with `tsc`, `eslint`, a full production build, and real runtime
+scripts: the frequency/clustering/gap/opportunity engines against
+realistic fixtures (18 assertions, including that zero evidence produces
+a zero score rather than a fabricated baseline), and the discovery
+stage's actual honest-fallback path with no `BRAVE_SEARCH_API_KEY`
+configured (verifying real inserted rows are tagged `ai_inference`/
+`insufficient_data`, never `live_web`, when no search happened). The
+AI-calling stages (extraction, concepts, report) are verified by
+typecheck and code review only — this sandbox has no live AI provider
+credentials to exercise them end-to-end against a real model.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

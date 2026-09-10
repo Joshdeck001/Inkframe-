@@ -9,6 +9,7 @@ import { runFormattingDepartmentTick } from "@/lib/formatting-department";
 import { runTranslationDepartmentTick } from "@/lib/translation-department";
 import { runAudiobookDepartmentTick } from "@/lib/audiobook-department";
 import { runKdpPreparationDepartmentTick } from "@/lib/kdp-preparation-department";
+import { runResearchDepartmentTick } from "@/lib/research-department";
 import { getPlanTier, maxPassesForTier, budgetMsForTier, type PlanTier } from "@/lib/plan-tier";
 
 export type DepartmentTick = (supabase: SupabaseClient) => Promise<{ processed: boolean; detail: string }>;
@@ -26,6 +27,7 @@ export const DEPARTMENTS: DepartmentEntry[] = [
   { name: "translation-department", run: runTranslationDepartmentTick },
   { name: "audiobook-department", run: runAudiobookDepartmentTick },
   { name: "kdp-preparation-department", run: runKdpPreparationDepartmentTick },
+  { name: "research-department", run: runResearchDepartmentTick },
 ];
 
 /**

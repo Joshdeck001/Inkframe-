@@ -105,6 +105,8 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [exportCount, setExportCount] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
+  const [tasks, setTasks] = useState<{ projectId: string; title: string; issue: string; route: string }[]>([]);
+  const [recentActivity, setRecentActivity] = useState<{ title: string; event: string; time: string }[]>([]);
   const [adminMessages, setAdminMessages] = useState<{ id: string; body: string }[]>([]);
   const [bellOpen, setBellOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -166,6 +168,51 @@ export default function DashboardPage() {
           ((projectRows ?? []) as unknown as ProjectRow[]).map((p) => p.id)
         );
       if (!cancelled) setExportCount(count ?? 0);
+
+      // Tasks + Recent Activity — reuse the project list already fetched
+      // above (no extra project query) and the existing quality_gate/
+      // publishing_log tables (no new schema). quality_gate's own boolean
+      // columns are cheap enough to check directly here rather than
+      // running the full Book Passport assembly for every project just to
+      // show one badge per book.
+      const allIds = ((projectRows ?? []) as unknown as ProjectRow[]).map((p) => p.id);
+      const unfinishedProjects = ((projectRows ?? []) as unknown as ProjectRow[]).filter((p) => p.status !== "EXPORTED");
+      const titleById = new Map(unfinishedProjects.map((p) => [p.id, p.project_identity?.working_title || "Untitled Project"]));
+
+      if (unfinishedProjects.length > 0) {
+        const { data: gates } = await supabase
+          .from("quality_gate")
+          .select("project_id, metadata_check, formatting_check, cover_check, overall_readiness_score")
+          .in("project_id", unfinishedProjects.map((p) => p.id));
+        if (!cancelled && gates) {
+          const found: { projectId: string; title: string; issue: string; route: string }[] = [];
+          for (const g of gates) {
+            const title = titleById.get(g.project_id);
+            if (!title) continue;
+            if (!g.metadata_check) found.push({ projectId: g.project_id, title, issue: "metadata incomplete", route: `/metadata?project=${g.project_id}` });
+            else if (!g.formatting_check) found.push({ projectId: g.project_id, title, issue: "formatting incomplete", route: `/formatter?project=${g.project_id}` });
+            else if (!g.cover_check) found.push({ projectId: g.project_id, title, issue: "cover missing", route: `/cover?project=${g.project_id}` });
+          }
+          setTasks(found.slice(0, 5));
+        }
+      }
+
+      if (allIds.length > 0) {
+        const { data: log } = await supabase
+          .from("publishing_log")
+          .select("event, occurred_at, project_id")
+          .in("project_id", allIds)
+          .order("occurred_at", { ascending: false })
+          .limit(5);
+        if (!cancelled && log) {
+          const allTitleById = new Map(
+            ((projectRows ?? []) as unknown as ProjectRow[]).map((p) => [p.id, p.project_identity?.working_title || "Untitled Project"])
+          );
+          setRecentActivity(
+            log.map((r) => ({ title: allTitleById.get(r.project_id) ?? "Untitled Project", event: r.event, time: relativeTime(r.occurred_at) }))
+          );
+        }
+      }
 
       const [{ data: messages }, { data: reads }] = await Promise.all([
         supabase
@@ -851,6 +898,37 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
+
+                {tasks.length > 0 && (
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h3>Tasks</h3>
+                    </div>
+                    {tasks.map((t) => (
+                      <div className="export-row" key={t.projectId} style={{ cursor: "pointer" }} onClick={() => router.push(t.route)}>
+                        <span className="name">⚠ Complete {t.issue} for {t.title}</span>
+                        <span className="check" style={{ marginLeft: "auto" }}>Fix ›</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {recentActivity.length > 0 && (
+                  <div className="panel">
+                    <div className="panel-head">
+                      <h3>Recent Activity</h3>
+                      <span className="view-all" style={{ cursor: "pointer" }} onClick={() => router.push("/activity")}>
+                        View All
+                      </span>
+                    </div>
+                    {recentActivity.map((a, i) => (
+                      <div className="export-row" key={i}>
+                        <span className="name">{a.title} — {a.event}</span>
+                        <span className="time">{a.time}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="panel">
                   <div className="panel-head">

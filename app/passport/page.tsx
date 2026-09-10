@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { sharedSecondaryCss } from "@/content/shared-secondary.css";
-import { assembleBookPassport, type BookPassport } from "@/lib/book-passport";
+import { assembleBookPassport, computeBookHealth, type BookPassport } from "@/lib/book-passport";
 
 export const dynamic = "force-dynamic";
 
@@ -75,21 +75,7 @@ function PassportBody() {
 
   const title = passport.identity?.workingTitle || "Untitled Project";
 
-  // Book Health Check — deterministic checks computed from real data already
-  // assembled above, never a fabricated percentage. Paperback only counts
-  // if the author actually generated one (it's opt-in, see the Cover Studio
-  // print-cover feature) — a book that never wanted a paperback isn't
-  // penalized for not having one.
-  const paperbackEdition = passport.formatting.editions.find((e) => e.formatType === "paperback");
-  const healthChecks: { label: string; ok: boolean; route: string }[] = [
-    { label: "Manuscript (all chapters approved)", ok: passport.chapters.total > 0 && passport.chapters.approved === passport.chapters.total, route: `/formatter?project=${projectId}` },
-    { label: "Ebook formatting (DOCX/EPUB)", ok: passport.ebookFormatting.status === "complete", route: `/formatter?project=${projectId}` },
-    { label: "Cover", ok: passport.cover.status === "done", route: `/cover?project=${projectId}` },
-    { label: "Metadata", ok: passport.metadata.status === "done", route: `/metadata?project=${projectId}` },
-    { label: "Quality gate scored", ok: !!passport.qualityGate?.overallReadinessScore, route: `/publish?project=${projectId}` },
-    ...(paperbackEdition ? [{ label: "Paperback print cover", ok: paperbackEdition.status === "ready", route: `/cover?project=${projectId}` }] : []),
-  ];
-  const readinessPct = Math.round((healthChecks.filter((c) => c.ok).length / healthChecks.length) * 100);
+  const { checks: healthChecks, readinessPct } = computeBookHealth(passport);
 
   return (
     <>

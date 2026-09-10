@@ -209,3 +209,30 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     marketing: { hasStrategy: !!advertisingProject },
   };
 }
+
+export type BookHealthCheck = { label: string; ok: boolean; route: string };
+export type BookHealth = { checks: BookHealthCheck[]; readinessPct: number };
+
+/**
+ * Deterministic "Book Health Check" / "Publishing Readiness" computation —
+ * shared by /passport (the full checklist) and the dashboard's Tasks
+ * widget (which just needs each project's top failing item), so the two
+ * can never drift into disagreeing about what "ready" means. Never a
+ * fabricated percentage: every check reads a real column already
+ * assembled by assembleBookPassport. Paperback only counts if one was
+ * actually generated — it's opt-in, so a book that never wanted one isn't
+ * penalized for not having it.
+ */
+export function computeBookHealth(passport: BookPassport): BookHealth {
+  const projectId = passport.projectId;
+  const paperbackEdition = passport.formatting.editions.find((e) => e.formatType === "paperback");
+  const checks: BookHealthCheck[] = [
+    { label: "Manuscript (all chapters approved)", ok: passport.chapters.total > 0 && passport.chapters.approved === passport.chapters.total, route: `/formatter?project=${projectId}` },
+    { label: "Ebook formatting (DOCX/EPUB)", ok: passport.ebookFormatting.status === "complete", route: `/formatter?project=${projectId}` },
+    { label: "Cover", ok: passport.cover.status === "done", route: `/cover?project=${projectId}` },
+    { label: "Metadata", ok: passport.metadata.status === "done", route: `/metadata?project=${projectId}` },
+    { label: "Quality gate scored", ok: !!passport.qualityGate?.overallReadinessScore, route: `/publish?project=${projectId}` },
+    ...(paperbackEdition ? [{ label: "Paperback print cover", ok: paperbackEdition.status === "ready", route: `/cover?project=${projectId}` }] : []),
+  ];
+  return { checks, readinessPct: Math.round((checks.filter((c) => c.ok).length / checks.length) * 100) };
+}

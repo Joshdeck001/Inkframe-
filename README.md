@@ -1113,6 +1113,30 @@ Version History, a "My Files" unified asset library, and duplicate-
 manuscript detection on upload — all real, all bigger, none safely
 buildable as an add-on to this round without their own scoping.
 
+## Dashboard Tasks + Recent Activity; deduplicated health-check logic
+
+The same consolidation spec came through twice, verbatim, in one
+conversation — rather than redo the prior round's work, picked up the one
+piece of it not yet done: the dashboard's own "Tasks" and "Recent
+Activity" panels (spec section 16).
+
+While wiring that up, found a real instance of exactly the duplication
+the spec warns against — the "Book Health Check" readiness computation
+I'd written inline inside `/passport` would have been copy-pasted a
+second time for the dashboard's Tasks widget. Extracted it instead:
+`computeBookHealth()` now lives in `lib/book-passport.ts`, used by both
+`/passport` (the full checklist) and the dashboard (just needs each
+project's top failing item), so the two can't drift into disagreeing
+about what "ready" means.
+
+Tasks and Recent Activity both reuse data that already existed — the
+dashboard's own already-fetched project list (no extra project query),
+`quality_gate`'s existing boolean columns (cheap enough to read directly
+for a one-line badge — no need to run the full Book Passport assembly for
+every project just to show "metadata incomplete"), and `publishing_log`
+(same table `/activity` reads, just the 5 most recent rows here instead
+of the full history).
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

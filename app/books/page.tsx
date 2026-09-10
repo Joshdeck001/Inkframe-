@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { sharedSecondaryCss } from "@/content/shared-secondary.css";
 
@@ -12,6 +12,7 @@ type Project = {
   status: string;
   updated_at: string;
   project_identity: { working_title: string | null; subtitle: string | null } | null;
+  chapters: { status: string }[] | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -32,9 +33,18 @@ const STATUS_LABEL: Record<string, string> = {
   EXPORTED: "Published",
 };
 
-export default function BooksPage() {
+// Writing is considered done once a project reaches GENERATING_COVER (the
+// Quality Loop only advances it there once every chapter is approved) —
+// this is the same boundary the rest of the app's state machine already
+// uses, not a new definition invented for this filter.
+const UNFINISHED_WRITING_STATUSES = ["IDEA", "BLUEPRINT", "AWAITING_APPROVAL", "QUEUED", "WRITING", "REVIEWING"];
+
+function BooksBody() {
   const router = useRouter();
   const supabase = createClient();
+  const searchParams = useSearchParams();
+  const unfinishedOnly = searchParams.get("filter") === "unfinished";
+
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +58,7 @@ export default function BooksPage() {
       if (!user || cancelled) return;
       const { data } = await supabase
         .from("projects")
-        .select("id, status, updated_at, project_identity(working_title, subtitle)")
+        .select("id, status, updated_at, project_identity(working_title, subtitle), chapters(status)")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false });
       if (!cancelled) setProjects((data as unknown as Project[]) ?? []);
@@ -87,6 +97,88 @@ export default function BooksPage() {
     setProjects((prev) => (prev ?? []).filter((p) => p.id !== project.id));
   }
 
+  const visibleProjects = unfinishedOnly
+    ? (projects ?? []).filter((p) => UNFINISHED_WRITING_STATUSES.includes(p.status))
+    : projects;
+
+  return (
+    <>
+      <h1>{unfinishedOnly ? "✎ Continue Writing" : "📚 My Books"}</h1>
+      <p className="subtitle">
+        {unfinishedOnly ? "Books with unfinished writing — pick one up where you left off." : "Every book you've started, in one place."}
+      </p>
+      {unfinishedOnly && (
+        <p className="hint" style={{ marginTop: "-18px", marginBottom: "20px" }}>
+          <span style={{ cursor: "pointer", color: "var(--blueGlow)" }} onClick={() => router.push("/books")}>
+            ← Show all books
+          </span>
+        </p>
+      )}
+
+      {error && (
+        <div className="panel" style={{ borderColor: "var(--red)" }}>
+          <p className="hint" style={{ color: "var(--redGlow)" }}>{error}</p>
+        </div>
+      )}
+
+      {visibleProjects && visibleProjects.length === 0 && unfinishedOnly && (
+        <div className="empty-panel">
+          <div className="ei">✎</div>
+          <h3>No unfinished books yet</h3>
+          <p>Start a new book to begin writing.</p>
+          <button className="btn btn-primary" onClick={() => router.push("/wizard")}>
+            ＋ New Book
+          </button>
+        </div>
+      )}
+
+      {visibleProjects && visibleProjects.length === 0 && !unfinishedOnly && (
+        <div className="empty-panel">
+          <div className="ei">📖</div>
+          <h3>No books yet</h3>
+          <p>Start your first book and it&apos;ll show up here.</p>
+          <button className="btn btn-primary" onClick={() => router.push("/wizard")}>
+            ＋ Create New Book
+          </button>
+        </div>
+      )}
+
+      {projects === null && <p className="hint">Loading…</p>}
+
+      {visibleProjects && visibleProjects.length > 0 && (
+        <div className="panel">
+          {visibleProjects.map((p) => {
+            const chapters = p.chapters ?? [];
+            const approved = chapters.filter((c) => c.status === "approved").length;
+            return (
+              <div className="catalog-row" key={p.id} onClick={() => openProject(p.id, p.status)}>
+                <span className="status-dot none"></span>
+                <div style={{ flex: 1 }}>
+                  <div className="bname">{p.project_identity?.working_title || "Untitled Project"}</div>
+                  <div className="bstatus">
+                    {p.project_identity?.subtitle || ""} — {STATUS_LABEL[p.status] ?? p.status}
+                    {chapters.length > 0 && ` — Chapter ${approved} of ${chapters.length} approved`}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: "6px 12px", fontSize: 12 }}
+                  disabled={deletingId === p.id}
+                  onClick={(e) => handleDelete(e, p)}
+                >
+                  {deletingId === p.id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function BooksPage() {
+  const router = useRouter();
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: sharedSecondaryCss }} />
@@ -100,51 +192,9 @@ export default function BooksPage() {
         </button>
       </header>
       <div className="wrap">
-        <h1>📚 My Books</h1>
-        <p className="subtitle">Every book you&apos;ve started, in one place.</p>
-
-        {error && (
-          <div className="panel" style={{ borderColor: "var(--red)" }}>
-            <p className="hint" style={{ color: "var(--redGlow)" }}>{error}</p>
-          </div>
-        )}
-
-        {projects && projects.length === 0 && (
-          <div className="empty-panel">
-            <div className="ei">📖</div>
-            <h3>No books yet</h3>
-            <p>Start your first book and it&apos;ll show up here.</p>
-            <button className="btn btn-primary" onClick={() => router.push("/wizard")}>
-              ＋ Create New Book
-            </button>
-          </div>
-        )}
-
-        {projects === null && <p className="hint">Loading…</p>}
-
-        {projects && projects.length > 0 && (
-          <div className="panel">
-            {projects.map((p) => (
-              <div className="catalog-row" key={p.id} onClick={() => openProject(p.id, p.status)}>
-                <span className="status-dot none"></span>
-                <div style={{ flex: 1 }}>
-                  <div className="bname">{p.project_identity?.working_title || "Untitled Project"}</div>
-                  <div className="bstatus">
-                    {p.project_identity?.subtitle || ""} — {STATUS_LABEL[p.status] ?? p.status}
-                  </div>
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: "6px 12px", fontSize: 12 }}
-                  disabled={deletingId === p.id}
-                  onClick={(e) => handleDelete(e, p)}
-                >
-                  {deletingId === p.id ? "Deleting…" : "Delete"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <Suspense fallback={<p className="hint">Loading…</p>}>
+          <BooksBody />
+        </Suspense>
       </div>
     </>
   );

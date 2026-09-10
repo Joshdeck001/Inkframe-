@@ -1015,6 +1015,53 @@ an explicit comment calling it out as unbuilt). What was missing:
   points matches the computed inch dimensions exactly (72pt/inch) — not
   just "a PDF came out the other end."
 
+## Navigation/workflow audit: Format Book, Continue Writing, dashboard links
+
+A UX correction spec flagged that several dashboard actions didn't do what
+their label promised. Audited the actual current behavior of each one
+(not assumed) before touching anything:
+
+- **Format Book → `/formatter`**: confirmed broken exactly as described —
+  the page showed only a project picker + existing formatting jobs, with
+  no way to bring in a manuscript that wasn't already an InkFrame project.
+  Fixed: added a primary "Upload Manuscript" panel at the top linking to
+  the already-built `/import` flow (not a second upload system — reusing
+  it), with the existing jobs list demoted to "Recent Formatting
+  Projects" below, matching the primary/secondary hierarchy asked for.
+- **Continue Writing**: confirmed broken, though not quite as described —
+  it wasn't showing a random book list, it was worse: it silently picked
+  one arbitrary non-exported project and dropped the user into it, with
+  no way to tell InkFrame picked the wrong one. Fixed: `/books` now
+  supports `?filter=unfinished`, showing only projects still actually
+  mid-writing (before `GENERATING_COVER` — the same boundary the rest of
+  the state machine already uses for "writing is done"), each with real
+  chapter-approval progress, and its own empty state
+  ("No unfinished books yet — start a new book").
+- **Dashboard sidebar**: added Book Passport and Audiobook Studio links —
+  both existed and worked, they just had no entry point from the
+  dashboard itself, which is what actually prompted this whole audit.
+- **Already correct, verified rather than assumed**: Research (rebuilt
+  earlier this session into a real evidence workspace, not a book list),
+  Cover Designer (has real AI-generated concepts + upload, not just a
+  static list), Translate Book (the spec explicitly said keep as-is),
+  New Book (already a real dedicated wizard, not a book list),
+  Advertising (already generates a strategy on request, not passive).
+
+**Not done this pass** — said so rather than quietly skipped: an
+interactive "describe the cover you want" prompt/regenerate workflow for
+Cover Designer (today's cover generation is automatic, not user-prompted
+per concept — a real, separate feature); an explicit "enter a book
+concept, get AI-researched metadata" interactive workspace for Metadata
+(today it auto-generates once formatting completes, with the same
+underlying data, but no on-demand "analyze this for me" UI); the full
+connected-object data model diagram in the spec's section 25 (most of it
+already exists via foreign keys across the existing tables — chapters,
+research_notes, cover_department, metadata_department, translation_jobs
+all key off `project_id` already — but auditing and documenting that
+fully is separate work); and the full 32-point click-through QA pass,
+which needs a live browser session against a real deployed project with
+real data, not something verifiable from this sandbox.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

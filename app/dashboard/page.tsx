@@ -431,6 +431,20 @@ export default function DashboardPage() {
           <div className="nav-item" onClick={() => router.push("/publish")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🚀</span> Publishing
           </div>
+          <div
+            className="nav-item"
+            style={{ cursor: "pointer" }}
+            onClick={() => (active ? router.push(`/passport?project=${active.id}`) : router.push("/books"))}
+          >
+            <span className="nav-icon">🪪</span> Book Passport
+          </div>
+          <div
+            className="nav-item"
+            style={{ cursor: "pointer" }}
+            onClick={() => (active ? router.push(`/audiobook?project=${active.id}`) : router.push("/books"))}
+          >
+            <span className="nav-icon">🎧</span> Audiobook Studio
+          </div>
           <div className="nav-item" onClick={() => setCopilotOpen((v) => !v)} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🤖</span> AI Copilot
           </div>
@@ -627,11 +641,7 @@ export default function DashboardPage() {
                     <h4>New Book</h4>
                     <span>Start writing</span>
                   </div>
-                  <div
-                    className="qa-card"
-                    style={{ cursor: "pointer" }}
-                    onClick={() => (active ? openProject(active.id, active.status) : router.push("/books"))}
-                  >
+                  <div className="qa-card" style={{ cursor: "pointer" }} onClick={() => router.push("/books?filter=unfinished")}>
                     <div className="qa-icon" style={{ background: "rgba(120,80,255,.15)", color: "#b7a0ff" }}>
                       ✎
                     </div>

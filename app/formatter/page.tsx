@@ -66,8 +66,20 @@ export default function FormatterPage() {
       </header>
       <div className="wrap">
         <h1>▦ Formatter</h1>
-        <p className="subtitle">Manuscript formatting jobs for your books. Each job produces both DOCX and EPUB — PDF isn&apos;t implemented yet.</p>
+        <p className="subtitle">Upload your manuscript and let InkFrame format it — or check formatting jobs for a book you&apos;re already working on here.</p>
 
+        <div className="panel" style={{ borderColor: "var(--blueGlow)", marginBottom: "24px" }}>
+          <div style={{ fontWeight: 700, marginBottom: "8px" }}>⇧ Already wrote it somewhere else?</div>
+          <p className="hint" style={{ marginBottom: "14px" }}>
+            Upload a .docx, .txt, pasted text, or a ChatGPT conversation export — InkFrame preserves your exact
+            words and formats it into a professional DOCX/EPUB, no rewriting.
+          </p>
+          <button className="btn btn-primary" onClick={() => router.push("/import")}>
+            Upload Manuscript
+          </button>
+        </div>
+
+        <div style={{ fontSize: "16px", fontWeight: 700, margin: "26px 0 10px" }}>Recent Formatting Projects</div>
         <ProjectPicker projects={projects} selectedId={effectiveId} onSelect={setSelectedId} />
 
         {effectiveId && (

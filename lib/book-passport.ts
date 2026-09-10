@@ -53,6 +53,7 @@ export type BookPassport = {
     platformTarget: string | null;
   } | null;
   chapters: { total: number; approved: number; titles: { number: number; title: string | null }[] };
+  ebookFormatting: { status: string | null; outputFormats: string[] };
   qualityGate: {
     overallReadinessScore: number | null;
     contentCheck: boolean;
@@ -83,6 +84,7 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     { data: platform },
     { data: chapters },
     { data: qualityGate },
+    { data: formattingJob },
     { data: cover },
     { data: metadata },
     { data: formatEditions },
@@ -99,6 +101,13 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     supabase.from("project_platform").select("*").eq("project_id", projectId).maybeSingle(),
     supabase.from("chapters").select("chapter_number, title, status").eq("project_id", projectId).order("chapter_number", { ascending: true }),
     supabase.from("quality_gate").select("*").eq("project_id", projectId).maybeSingle(),
+    supabase
+      .from("formatting_jobs")
+      .select("status, output_formats")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
     supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", projectId).maybeSingle(),
     supabase.from("metadata_department").select("keywords, categories").eq("project_id", projectId).maybeSingle(),
     supabase.from("format_editions").select("format_type, status, page_count, price").eq("project_id", projectId),
@@ -166,6 +175,7 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
       approved: chapterRows.filter((c) => c.status === "approved").length,
       titles: chapterRows.map((c) => ({ number: c.chapter_number, title: c.title })),
     },
+    ebookFormatting: { status: formattingJob?.status ?? null, outputFormats: formattingJob?.output_formats ?? [] },
     qualityGate: qualityGate
       ? {
           overallReadinessScore: qualityGate.overall_readiness_score,

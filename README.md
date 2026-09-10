@@ -1062,6 +1062,57 @@ fully is separate work); and the full 32-point click-through QA pass,
 which needs a live browser session against a real deployed project with
 real data, not something verifiable from this sandbox.
 
+## Consolidation pass: Book Health Check, Activity Center, sidebar groups
+
+A follow-up spec asked for platform-wide consolidation — explicitly:
+audit first, don't duplicate anything already built, only add genuine
+gaps. Two findings mattered before writing any code:
+
+- **"Ask InkFrame" / cross-project AI context already exists** as the AI
+  Copilot (`copilot_sessions`/`copilot_messages`, `/api/copilot/message`)
+  — it's already project-scoped, reads real DB facts, classifies intent.
+  Building a second version would have been exactly the duplication the
+  spec forbids.
+- **"Autosave" doesn't apply to anything that exists** — there is no live
+  chapter-text editor anywhere in the app (chapters are AI-drafted and
+  approved, never hand-typed), so there's nothing to autosave. Said so
+  rather than building a fake autosave indicator for an editor that isn't
+  there.
+
+Given that, "Book Health Check" and "Publishing Checklist" were folded
+into the **existing** Book Passport page instead of becoming new pages —
+a real duplicate-page risk avoided on purpose. `lib/book-passport.ts` now
+also includes `ebookFormatting` (the DOCX/EPUB `formatting_jobs` status,
+missing from the original Book Passport pass — a real gap in the earlier
+work, not new scope). The Passport page computes a genuine readiness %
+from real, already-assembled data — manuscript fully approved, ebook
+formatting complete, cover done, metadata done, quality gate scored, and
+paperback print cover only counted if one was actually generated (it's
+opt-in) — never a fabricated number, with a "Fix" button per failing item
+routing straight to the relevant studio.
+
+**Activity Center** (`/activity`) is a real gap, now filled — it reads
+the existing `publishing_log` (already written to by every department,
+already real-events-only) across every project the user owns, instead of
+the one-project-at-a-time view that already existed inside each studio.
+No new table.
+
+**Sidebar reorganized** into Create / Design / Optimize / Market /
+Publish / Library / AI groups, using the exact same existing routes —
+nothing was rebuilt, only regrouped. Verified every single link (old and
+new) resolves to a real page — no dead links introduced.
+
+**AI Copilot replies now carry an actionable "Open Book Passport →"
+button** on status/general questions — computed deterministically in
+`/api/copilot/message` from the real project state, never from the
+model's own guess at a route, since a suggested next step has to point
+somewhere genuinely correct.
+
+Not done this pass, said so rather than skipped quietly: Global Search,
+Version History, a "My Files" unified asset library, and duplicate-
+manuscript detection on upload — all real, all bigger, none safely
+buildable as an add-on to this round without their own scoping.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

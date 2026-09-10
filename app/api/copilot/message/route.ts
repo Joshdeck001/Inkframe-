@@ -214,5 +214,16 @@ export const POST = withJsonErrors(async (request: Request) => {
     triggered_action: triggeredAction,
   });
 
-  return NextResponse.json({ reply, production_paused: productionPaused, triggered_action: triggeredAction });
+  // Computed deterministically from the real project, never from the
+  // model's own text — a "next step" button must point somewhere
+  // genuinely correct, not wherever the model guessed. Book Passport is
+  // the one page that already shows exactly what's done/missing with its
+  // own fix-links, so routing any status/general question there is
+  // always accurate regardless of which specific thing is incomplete.
+  const suggestedAction =
+    parsed.intent === "status_query" || parsed.intent === "general_question"
+      ? { label: "Open Book Passport", route: `/passport?project=${project_id}` }
+      : null;
+
+  return NextResponse.json({ reply, production_paused: productionPaused, triggered_action: triggeredAction, suggested_action: suggestedAction });
 });

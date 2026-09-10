@@ -75,8 +75,40 @@ function PassportBody() {
 
   const title = passport.identity?.workingTitle || "Untitled Project";
 
+  // Book Health Check — deterministic checks computed from real data already
+  // assembled above, never a fabricated percentage. Paperback only counts
+  // if the author actually generated one (it's opt-in, see the Cover Studio
+  // print-cover feature) — a book that never wanted a paperback isn't
+  // penalized for not having one.
+  const paperbackEdition = passport.formatting.editions.find((e) => e.formatType === "paperback");
+  const healthChecks: { label: string; ok: boolean; route: string }[] = [
+    { label: "Manuscript (all chapters approved)", ok: passport.chapters.total > 0 && passport.chapters.approved === passport.chapters.total, route: `/formatter?project=${projectId}` },
+    { label: "Ebook formatting (DOCX/EPUB)", ok: passport.ebookFormatting.status === "complete", route: `/formatter?project=${projectId}` },
+    { label: "Cover", ok: passport.cover.status === "done", route: `/cover?project=${projectId}` },
+    { label: "Metadata", ok: passport.metadata.status === "done", route: `/metadata?project=${projectId}` },
+    { label: "Quality gate scored", ok: !!passport.qualityGate?.overallReadinessScore, route: `/publish?project=${projectId}` },
+    ...(paperbackEdition ? [{ label: "Paperback print cover", ok: paperbackEdition.status === "ready", route: `/cover?project=${projectId}` }] : []),
+  ];
+  const readinessPct = Math.round((healthChecks.filter((c) => c.ok).length / healthChecks.length) * 100);
+
   return (
     <>
+      <div className="panel" style={{ borderColor: readinessPct === 100 ? "#5fe3b8" : undefined }}>
+        <div style={{ fontWeight: 700, marginBottom: "10px" }}>
+          Book Health: <span style={{ color: readinessPct === 100 ? "#5fe3b8" : "#ffc266" }}>{readinessPct}% Ready</span>
+        </div>
+        {healthChecks.map((c) => (
+          <div className="check-row" key={c.label}>
+            <span>{c.ok ? "✓" : "⚠"} {c.label}</span>
+            {!c.ok && (
+              <button className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "12px" }} onClick={() => router.push(c.route)}>
+                Fix
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
       <div className="panel">
         <div style={{ fontWeight: 700, fontSize: "16px", marginBottom: "4px" }}>{title}</div>
         {passport.identity?.subtitle && <div className="hint" style={{ marginBottom: "10px" }}>{passport.identity.subtitle}</div>}

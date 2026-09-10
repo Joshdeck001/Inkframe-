@@ -96,9 +96,9 @@ export default function DashboardPage() {
       (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
     return !!ctor && "speechSynthesis" in window;
   });
-  const [transcript, setTranscript] = useState<{ who: "user" | "inkframe"; text: string }[]>([
-    { who: "inkframe", text: "How can I help with this book?" },
-  ]);
+  const [transcript, setTranscript] = useState<
+    { who: "user" | "inkframe"; text: string; suggestedAction?: { label: string; route: string } | null }[]
+  >([{ who: "inkframe", text: "How can I help with this book?" }]);
 
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -269,7 +269,7 @@ export default function DashboardPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Copilot request failed.");
       setProductionPaused(!!json.production_paused);
-      setTranscript((t) => [...t, { who: "inkframe", text: json.reply }]);
+      setTranscript((t) => [...t, { who: "inkframe", text: json.reply, suggestedAction: json.suggested_action ?? null }]);
       speak(json.reply);
     } catch (e) {
       const errText = e instanceof Error ? e.message : "Sorry — I couldn't reach the Copilot just now.";
@@ -394,6 +394,13 @@ export default function DashboardPage() {
           <div className="nav-item active">
             <span className="nav-icon">⌂</span> Dashboard
           </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Create
+          </div>
+          <div className="nav-item" onClick={createNewBook} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">＋</span> New Book
+          </div>
           <div
             className="nav-item"
             style={{ cursor: "pointer" }}
@@ -401,11 +408,15 @@ export default function DashboardPage() {
           >
             <span className="nav-icon">✎</span> AI Writing Agent
           </div>
-          <div className="nav-item" onClick={() => router.push("/books")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">▤</span> My Books
+          <div className="nav-item" onClick={() => router.push("/research")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">🔎</span> Research
           </div>
-          <div className="nav-item" onClick={createNewBook} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">＋</span> New Book
+          <div className="nav-item" onClick={() => router.push("/images")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">🖼</span> Images
+          </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Design
           </div>
           <div className="nav-item" onClick={() => router.push("/cover")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">◈</span> Cover Designer
@@ -413,11 +424,9 @@ export default function DashboardPage() {
           <div className="nav-item" onClick={() => router.push("/formatter")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">▦</span> Formatter
           </div>
-          <div className="nav-item" onClick={() => router.push("/images")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">🖼</span> Images
-          </div>
-          <div className="nav-item" onClick={() => router.push("/research")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">🔎</span> Research
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Optimize
           </div>
           <div className="nav-item" onClick={() => router.push("/metadata")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🏷</span> Metadata
@@ -425,18 +434,29 @@ export default function DashboardPage() {
           <div className="nav-item" onClick={() => router.push("/translate")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🌐</span> Translation
           </div>
-          <div className="nav-item" onClick={() => router.push("/advertising")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">📈</span> Advertising
-          </div>
-          <div className="nav-item" onClick={() => router.push("/publish")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">🚀</span> Publishing
-          </div>
           <div
             className="nav-item"
             style={{ cursor: "pointer" }}
             onClick={() => (active ? router.push(`/passport?project=${active.id}`) : router.push("/books"))}
           >
-            <span className="nav-icon">🪪</span> Book Passport
+            <span className="nav-icon">🩺</span> Book Health Check
+          </div>
+          <div className="nav-item" onClick={() => router.push("/compliance")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">✓</span> Compliance Check
+          </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Market
+          </div>
+          <div className="nav-item" onClick={() => router.push("/advertising")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">📈</span> Advertising
+          </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Publish
+          </div>
+          <div className="nav-item" onClick={() => router.push("/publish")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">🚀</span> Publishing
           </div>
           <div
             className="nav-item"
@@ -445,17 +465,28 @@ export default function DashboardPage() {
           >
             <span className="nav-icon">🎧</span> Audiobook Studio
           </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            Library
+          </div>
+          <div className="nav-item" onClick={() => router.push("/books")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">▤</span> My Books
+          </div>
+          <div className="nav-item" onClick={() => router.push("/activity")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">🕓</span> Activity
+          </div>
+          <div className="nav-item" onClick={() => router.push("/templates")} style={{ cursor: "pointer" }}>
+            <span className="nav-icon">▧</span> Templates
+          </div>
+
+          <div style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: ".06em", color: "var(--muted)", textTransform: "uppercase", margin: "16px 10px 4px" }}>
+            AI
+          </div>
           <div className="nav-item" onClick={() => setCopilotOpen((v) => !v)} style={{ cursor: "pointer" }}>
             <span className="nav-icon">🤖</span> AI Copilot
           </div>
 
           <div className="nav-sep"></div>
-          <div className="nav-item" onClick={() => router.push("/templates")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">▧</span> Templates
-          </div>
-          <div className="nav-item" onClick={() => router.push("/compliance")} style={{ cursor: "pointer" }}>
-            <span className="nav-icon">✓</span> Compliance Check
-          </div>
           <div className="nav-item" onClick={() => router.push("/settings")} style={{ cursor: "pointer" }}>
             <span className="nav-icon">⚙</span> Settings
           </div>
@@ -871,6 +902,24 @@ export default function DashboardPage() {
             <div className="cp-msg" key={i}>
               <div className="who">{m.who === "inkframe" ? "INKFRAME" : "YOU"}</div>
               <div>{m.text}</div>
+              {m.suggestedAction && (
+                <button
+                  onClick={() => router.push(m.suggestedAction!.route)}
+                  style={{
+                    marginTop: "8px",
+                    padding: "6px 12px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    borderRadius: "8px",
+                    background: "rgba(255,255,255,.06)",
+                    border: "1px solid var(--border)",
+                    color: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  {m.suggestedAction.label} →
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -128,6 +128,13 @@
      computations `lib/research-agent.ts`'s analysis stage now runs. See
      "Publishing Intelligence Research Department" in the root
      `README.md`.
+   - `supabase/migrations/0021_cover_engine.sql` — adds
+     `image_generation_log` (real per-attempt usage tracking for every
+     OpenAI/Gemini cover-art call — provider, model, quality, real token
+     counts from the provider's own response, never a fabricated dollar
+     cost) and a private `cover-references` storage bucket for images a
+     user uploads to inform or be edited into an AI cover generation. See
+     "OpenAI-Powered Cover Engine" in the root `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

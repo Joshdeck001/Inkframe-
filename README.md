@@ -1610,6 +1610,146 @@ normalizes to nothing (never a guessed platform), and that all of the
 prior round's frequency/clustering/gap engines still pass their original
 assertions unchanged.
 
+## OpenAI-Powered Cover Engine
+
+The next spec (40 sections) asked to upgrade Cover Designer into a
+production cover system built on a specific named OpenAI model family:
+`gpt-image-2.5-sunburst` (premium) and `gpt-image-2.5-flare` (fast).
+
+**Those model names don't exist.** Before writing any code, this was
+checked against the actual installed `openai` npm package's own type
+definitions (`node_modules/openai/resources/images.d.ts`, package
+version 7.8.0 — this sandbox's network egress to
+`platform.openai.com` is blocked, both today and in the round that first
+wired up OpenAI image generation, so the installed, versioned SDK's real
+types are the actual current source of truth used here, not a live
+fetch or the spec's own claim). The real model enum is `gpt-image-1`,
+`gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2`,
+`gpt-image-2-2026-04-21`, and `chatgpt-image-latest` (`dall-e-2`/`3`
+are the actually-obsolete ones this app never targets) — no "sunburst"
+or "flare" anywhere, and no separate "premium" vs "fast" model at all.
+What's real is a `quality` request parameter (`low`/`medium`/`high`/
+`auto`) on one configured model — that's the actual lever the spec's
+premium/fast distinction maps to. Building against invented model IDs
+would mean every generation call fails outright the first time it runs
+against the real API, which is exactly the "fake OpenAI integration"
+the spec's own section 36 forbids — so this was corrected rather than
+implemented as written, and `OPENAI_IMAGE_MODEL` keeps its existing
+default (`gpt-image-1`, unchanged from where this app's cover/interior
+art generation already had it) rather than silently switching to a
+newer model with different cost/latency this sandbox can't verify
+against OpenAI's current pricing.
+
+**Audited first, same discipline as every round.** The existing Cover
+Designer already had real artwork generation (`lib/image-client.ts`,
+OpenAI-then-Gemini), a real paperback spine/wrap calculator
+(`lib/print-cover.ts`, cross-checked against multiple independent
+sources) and a real print PDF builder (`lib/print-cover-pdf.ts`,
+`pdf-lib`), and an automatic 3-concept drafting pipeline
+(`lib/cover-department.ts`). None of that was rebuilt — this round adds
+the image-provider abstraction, real editing, versioning, CoverBrief
+grounding, and validation the spec asks for as upgrades to those exact
+files and tables, not parallel ones. `lib/image-client.ts` itself is
+untouched and still serves `lib/image-department.ts`'s interior/
+manuscript images exactly as before — the new provider abstraction only
+touches the Cover Designer path that actually needed it.
+
+**Real provider abstraction** (`lib/image-provider.ts`): a genuine
+`ImageGenerationProvider` interface (`generateImage`/`editImage`/
+`getCapabilities`), implemented by `lib/openai-image-provider.ts` (using
+the real `images.generate`/`images.edit` endpoints, including real
+per-response token usage when the API returns it) and
+`lib/gemini-image-provider.ts` (generation only — `editImage()` throws a
+real capability error instead of silently generating from scratch and
+calling that an edit, since Gemini has no equivalent endpoint this app
+uses). `lib/cover-image-generation.ts` is the one orchestrator Cover
+Designer code calls — tries OpenAI then Gemini for generation, OpenAI
+only for edits, and logs every attempt (success or failure) to the new
+`image_generation_log` table.
+
+**CoverBrief** (`lib/cover-brief.ts`): assembled automatically from
+`project_identity`/`project_audience`/`project_style`/`story_bible`
+(fiction) and any *accepted* research report — the same
+`fetchAcceptedResearchFacts` lookup `lib/writing-agent.ts` and
+`lib/metadata-department.ts` already use, so research informing a cover
+is the same approval gate as everywhere else, not a new one. Only
+includes fields real data exists for — no `characters`/`visualMotifs`/
+`setting`, since nothing in the schema populates them, and an
+always-empty field is worse than an honestly absent one.
+
+**Genuinely distinct concepts** (`lib/cover-concepts.ts`): the concept-
+drafting tool schema now requires each concept to declare one of four
+fixed, non-repeatable style directions (Cinematic / Luxury Editorial /
+Emotional Minimalist / Character Driven) — the spec's own complaint
+("do not generate four nearly identical prompts") addressed structurally,
+not just by asking nicely in the prompt.
+
+**Real reference-image editing and version history.** `/api/cover/edit`
+calls the real OpenAI edit endpoint — either editing an existing
+concept's artwork, generating from an uploaded reference image, or both
+— and always creates a new concept version (`cover_department.concepts`
+gained `version`/`parent_version`/`source`/`reference_image_ref`/
+`edit_instructions` fields; the array was already jsonb, so no prior
+concept is ever deleted or overwritten). `/api/cover/generate-concepts`
+is the on-demand "Generate More Concepts" action — it only drafts the
+text concepts synchronously; the artwork itself is queued
+(`image_attempted: false`) and rendered by the *existing*
+`lib/cover-department.ts` background tick, the same one the automatic
+pipeline already uses, extended to also scan for manually-queued work
+on projects past the automatic `GENERATING_COVER` stage. One job
+mechanism, not two.
+
+**Cost/usage tracking, honestly bounded.** `image_generation_log` records
+provider/model/quality/size and real image/text token counts whenever
+the API actually returns them. It deliberately has no dollar-cost
+column: this sandbox can't reach OpenAI's pricing page to verify current
+per-image pricing, and hardcoding a $ figure would be exactly the
+fabricated-data problem this app's research/publishing features already
+refuse to do elsewhere. The Cover Designer's usage panel shows real
+token counts and says plainly to check the OpenAI account's own usage
+page for current cost.
+
+**Preflight validation** (`lib/cover-validation.ts`): `validateCover()`
+returns structured pass/warning/error checks (artwork selected, title/
+author present, paperback dimensions calculated and not stale, spine
+width safe for text, print PDF generated) — reusing the real spine-width
+number `lib/print-cover.ts` already calculated, never re-deriving it.
+This isn't a second Book Health engine: `computeBookHealth()`
+(`lib/book-passport.ts`) still owns the project-wide "Cover" and
+"Paperback print cover" checks unchanged; this is the same underlying
+facts shown at finer grain inside Cover Designer itself, before export.
+
+**Explicitly declined or deferred, not silently skipped:**
+- **Hardcover cover generation.** Still no hardcover case-wrap template
+  math anywhere in this app (different bleed/hinge allowances than
+  paperback) — restated plainly in the Cover Designer UI rather than
+  offered as a mode that would fail or fake its output.
+- **AI-extended full paperback wrap** (spec section 15 — using the edit
+  endpoint to extend front-cover art across spine and back). The real
+  building block for this now exists (`editCoverArt`, real reference-
+  image editing), but wiring its output into `lib/print-cover-pdf.ts` in
+  place of the current labeled back/spine template is real additional
+  engineering this round didn't reach — a genuine follow-up, not
+  abandoned scope, since the hard part (real image editing) is already
+  built.
+- **Series Visual Identity** (spec section 33 — a stored palette/
+  typography/motif system reused across a series' covers) and **a
+  dedicated "Analyze this cover" critique feature** (spec section 30,
+  which needs a vision-capable AI call on an uploaded image this app
+  doesn't make anywhere yet) — both real, substantial, standalone
+  features not attempted this round given the scope already covered.
+
+Verified with `tsc`, `eslint`, a full production build, and real runtime
+tests: `validateCover()` against realistic fixtures (missing artwork,
+missing author as a warning not an error, a stale page-count flag
+correctly erroring, a too-thin spine correctly warning from the real
+calculated width, a fully-complete cover passing cleanly), the four
+style directions confirmed unique, and — since this sandbox has no live
+OpenAI/Gemini credentials to exercise real generation — a genuine
+end-to-end check that `generateCoverArt`/`editCoverArt` fail with the
+correct honest error message when no provider is configured, rather
+than silently returning a fabricated result.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

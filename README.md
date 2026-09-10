@@ -1750,6 +1750,92 @@ end-to-end check that `generateCoverArt`/`editCoverArt` fail with the
 correct honest error message when no provider is configured, rather
 than silently returning a fabricated result.
 
+## InkframeScout — a real extension, not the automated scraper that was asked for
+
+The next spec asked for a browser extension, "InkframeScout," that
+automatically detects every book on an Amazon/Google Play Books/Kobo
+search-results or best-seller page as the user scrolls, injects an
+intelligence overlay onto each one, and continuously syncs the extracted
+data to InkFrame for cross-account aggregation into a shared market
+dataset. The spec itself lists real safeguards (no CAPTCHA/MFA/login
+bypass, no credential collection) and asks explicitly that this not be
+built as a system designed to circumvent marketplace protections.
+
+**That automatic, continuous, multi-book scanning mechanism was not
+built.** Before writing any code, the same research this session already
+did on Amazon's Conditions of Use (during the KDP and Research rounds)
+applies here too: Amazon's terms prohibit automated data mining, robots,
+and similar data-gathering tools against its site, and that prohibition
+covers the *act* of automated, systematic extraction — not just bypassing
+authentication. A content script that auto-parses every visible book on
+every page a user browses and continuously syncs it to a third-party
+server for cross-account aggregation is exactly that category of tool,
+regardless of which real, logged-in human's browser it happens to run
+inside. Building it as a first-party InkFrame feature — especially with
+the spec's own "cumulative market intelligence" goal of pooling many
+users' captures into one shared dataset — would put users' marketplace
+accounts and InkFrame itself at real risk, not a technicality. This was
+put to the user directly rather than assumed; they asked for "the best
+[option] and something that won't affect our creation," so the design
+below is the one built.
+
+**What InkframeScout actually is: a real, installable extension that
+captures one book at a time, only when the user explicitly clicks
+"Clip This Book."** No `content_scripts` are registered in the
+manifest at all — `extension/content/extract.js` only ever runs via
+`chrome.scripting.executeScript` after that click, using the
+`activeTab` permission Chrome grants for that single user gesture.
+Nothing auto-scans, nothing re-runs on scroll, nothing gets injected
+into Amazon/Kobo/Google Play's own page UI. It reads only what's already
+rendered at the moment of the click and errors honestly (`{error: "..."}`)
+rather than guessing when it can't confidently identify a book.
+
+**Real, account-scoped connections.** `extension_connections`
+(migration `0022`) stores only a SHA-256 hash of each connection
+code — the raw code is shown once, in **Settings → Extensions →
+InkframeScout**, and never persisted. Every extension-authenticated API
+route (`/api/inkframescout/*`) resolves the owning user from that hash
+server-side; the extension never sends a user id the server would have
+to trust. Revocation works from either side — the Settings page (direct,
+RLS-scoped) or the extension's own "Disconnect" button.
+
+**Clips are not evidence until a human says so.** A capture lands in
+`scout_clips` as raw data. It only becomes real research evidence —
+inserted into the exact same `competitor_research` table every other
+research path already writes to, from migration `0016`/`0019` — once the
+user reviews it in Research's new "My Clips" panel and assigns it to a
+session. Assigned clips are tagged `source_type: 'browser_clip'`, a new
+value alongside the existing `user_provided`/`ai_inference`/`live_web`
+labels, so a captured-with-one-click provenance stays honestly
+distinguishable from hand-typed entry and AI inference — not a new
+evidence system, one more tag on the one that already existed.
+
+**Explicitly not built, and why:** automatic overlay panels injected
+into Amazon/Kobo/Google Play's own search or best-seller pages;
+continuous/scroll-triggered scanning; the BSR-history/sales-estimation/
+royalty-estimation engine (a real, substantial feature on its own, and
+one that specifically depends on the bulk historical-observation
+pipeline that was declined); and cross-account "cumulative market
+intelligence" aggregation (raises both the ToS-severity-at-scale concern
+above and real data-governance questions the spec itself flags as
+needing a privacy policy that doesn't exist yet). The opportunity-
+scoring pipeline a clip eventually feeds is unchanged and already real —
+`lib/research-opportunity.ts` from the Research round — reused as-is,
+not rebuilt.
+
+Verified with `tsc`, `eslint`, a full production build, and real runtime
+tests: `extension/content/extract.js`'s actual field-extraction logic
+run against a fake DOM (real Amazon/Kobo selector parsing — title,
+author, ASIN from the URL, price, rating, review count — plus honest
+`{error}` results for an unidentifiable page and an unsupported host,
+never a guessed value), and `lib/scout-connection.ts`'s real SHA-256
+hashing, bearer-token parsing, and connection resolution (including that
+a revoked connection correctly resolves to `null` even with a
+technically-matching hash). The extension's manifest and all three JS
+files were also validated as syntactically real (`node --check`, a
+parsed `manifest.json`) and its three PNG icons confirmed as genuine,
+valid image files, not placeholders.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

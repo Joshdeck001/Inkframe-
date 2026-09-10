@@ -135,6 +135,18 @@
      cost) and a private `cover-references` storage bucket for images a
      user uploads to inform or be edited into an AI cover generation. See
      "OpenAI-Powered Cover Engine" in the root `README.md`.
+   - `supabase/migrations/0022_inkframescout.sql` — adds
+     `extension_connections` (account-scoped browser-extension
+     credentials — only a SHA-256 hash is ever stored, never the raw
+     code) and `scout_clips` (single deliberate captures from the
+     InkframeScout browser extension, awaiting the user's own decision to
+     fold each one into a real research session). Widens
+     `competitor_research`/`keyword_research`/`category_research`'s
+     `source_type` check constraint to add `'browser_clip'` alongside the
+     existing `user_provided`/`ai_inference`/`live_web` values. See
+     "InkframeScout" in the root `README.md` for why this is a
+     single-click clipper, not the automated marketplace-scanning
+     extension originally specced.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

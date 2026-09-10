@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>InkframeScout</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <div class="logo"><span class="ink">Inkframe</span><span class="scout">Scout</span></div>
+  </header>
+
+  <main id="setup-view" hidden>
+    <p class="hint">Connect this extension to your InkFrame account.</p>
+    <label>InkFrame URL</label>
+    <input id="api-base-url" type="text" placeholder="https://your-inkframe-app.example.com" />
+    <label>Connection code</label>
+    <input id="connection-code" type="text" placeholder="Paste the code from Settings → Extensions" />
+    <button id="connect-btn" class="primary">Connect</button>
+    <p id="setup-error" class="error" hidden></p>
+    <p class="hint small">Get a code from InkFrame → Settings → Extensions → InkframeScout → Generate Connection Code.</p>
+  </main>
+
+  <main id="connected-view" hidden>
+    <div class="status-row">
+      <span class="dot"></span>
+      <span>Connected</span>
+    </div>
+
+    <div class="stat-row">
+      <span>Clips today</span>
+      <span id="clips-today">—</span>
+    </div>
+    <div class="stat-row">
+      <span>Awaiting review</span>
+      <span id="unassigned-clips">—</span>
+    </div>
+
+    <div id="page-status" class="page-status">Checking this page…</div>
+
+    <button id="clip-btn" class="primary" disabled>Clip This Book</button>
+    <p id="clip-result" class="result" hidden></p>
+
+    <div class="footer-actions">
+      <button id="open-inkframe-btn" class="secondary">Open InkFrame</button>
+      <button id="disconnect-btn" class="secondary">Disconnect</button>
+    </div>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

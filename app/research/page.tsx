@@ -820,6 +820,94 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
 // Overview / history
 // ---------------------------------------------------------------------------
 
+type ScoutClip = {
+  id: string;
+  marketplace: string;
+  title: string | null;
+  author: string | null;
+  source_url: string;
+  price: number | null;
+  category: string | null;
+  clipped_at: string;
+};
+
+function MyClipsPanel() {
+  const supabase = createClient();
+  const [clips, setClips] = useState<ScoutClip[] | null>(null);
+  const [sessions, setSessions] = useState<{ id: string; topic: string }[]>([]);
+  const [assigning, setAssigning] = useState<string | null>(null);
+
+  async function load() {
+    const [{ data: c }, { data: s }] = await Promise.all([
+      supabase.from("scout_clips").select("id, marketplace, title, author, source_url, price, category, clipped_at").eq("status", "unassigned").order("clipped_at", { ascending: false }),
+      supabase.from("research_sessions").select("id, topic").order("created_at", { ascending: false }).limit(30),
+    ]);
+    setClips((c as ScoutClip[]) ?? []);
+    setSessions(s ?? []);
+  }
+
+  useEffect(() => {
+    (async () => {
+      await load();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function assign(clip: ScoutClip, sessionId: string) {
+    setAssigning(clip.id);
+    await supabase.from("competitor_research").insert({
+      session_id: sessionId,
+      title: clip.title || clip.source_url,
+      author: clip.author,
+      price: clip.price,
+      category: clip.category,
+      source_url: clip.source_url,
+      platform: clip.marketplace === "google_play_books" ? "google_play" : clip.marketplace,
+      source_type: "browser_clip",
+      confidence: "high",
+    });
+    await supabase.from("scout_clips").update({ status: "assigned", assigned_session_id: sessionId }).eq("id", clip.id);
+    setAssigning(null);
+    await load();
+  }
+
+  async function discard(clipId: string) {
+    await supabase.from("scout_clips").update({ status: "discarded" }).eq("id", clipId);
+    await load();
+  }
+
+  if (clips === null || clips.length === 0) return null;
+
+  return (
+    <div className="panel">
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>My Clips ({clips.length})</div>
+      <p className="hint" style={{ marginBottom: "12px" }}>
+        Captured with InkframeScout, one deliberate click at a time — file each into a research session as real
+        competitor evidence, or discard it.
+      </p>
+      {clips.map((clip) => (
+        <div key={clip.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
+          <div style={{ fontWeight: 600, fontSize: "13px" }}>{clip.title || clip.source_url}</div>
+          <div className="hint" style={{ fontSize: "12px", marginBottom: "8px" }}>
+            {PLATFORM_LABELS[clip.marketplace === "google_play_books" ? "google_play" : clip.marketplace] ?? clip.marketplace}
+            {clip.author ? ` · ${clip.author}` : ""}
+            {clip.price != null ? ` · $${clip.price}` : ""} · {new Date(clip.clipped_at).toLocaleString()}
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <select onChange={(e) => e.target.value && assign(clip, e.target.value)} disabled={assigning === clip.id} defaultValue="">
+              <option value="" disabled>Assign to session…</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>{s.topic || "Open discovery"}</option>
+              ))}
+            </select>
+            <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Overview({ onSelect, onNew }: { onSelect: (id: string) => void; onNew: () => void }) {
   const supabase = createClient();
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
@@ -937,6 +1025,7 @@ export default function ResearchPage() {
 
         {view === "overview" && (
           <>
+            <MyClipsPanel />
             <Overview
               onSelect={(id) => {
                 setActiveSessionId(id);

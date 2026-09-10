@@ -24,6 +24,13 @@ export default function SettingsPage() {
   const [preferredProvider, setPreferredProvider] = useState("auto");
   const [savingProvider, setSavingProvider] = useState(false);
 
+  const [connections, setConnections] = useState<
+    { id: string; name: string; created_at: string; last_used_at: string | null; status: string }[] | null
+  >(null);
+  const [newCode, setNewCode] = useState<string | null>(null);
+  const [generatingCode, setGeneratingCode] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -38,6 +45,8 @@ export default function SettingsPage() {
 
       const { data: profile } = await supabase.from("profiles").select("preferred_ai_provider").eq("id", user.id).single();
       if (!cancelled && profile?.preferred_ai_provider) setPreferredProvider(profile.preferred_ai_provider);
+
+      await loadConnections();
     })();
     return () => {
       cancelled = true;
@@ -119,6 +128,43 @@ export default function SettingsPage() {
     setSavingProvider(false);
     if (error) setError(error.message);
     else setMessage("AI model preference saved.");
+  }
+
+  async function loadConnections() {
+    const { data } = await supabase
+      .from("extension_connections")
+      .select("id, name, created_at, last_used_at, status")
+      .order("created_at", { ascending: false });
+    setConnections(data ?? []);
+  }
+
+  async function handleGenerateCode() {
+    setGeneratingCode(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/inkframescout/connect", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not generate a connection code.");
+      setNewCode(json.code);
+      setCodeCopied(false);
+      await loadConnections();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not generate a connection code.");
+    } finally {
+      setGeneratingCode(false);
+    }
+  }
+
+  function handleCopyCode() {
+    if (!newCode) return;
+    if (navigator.clipboard) navigator.clipboard.writeText(newCode);
+    setCodeCopied(true);
+  }
+
+  async function handleRevokeConnection(id: string) {
+    await supabase.from("extension_connections").update({ status: "revoked", revoked_at: new Date().toISOString() }).eq("id", id);
+    await loadConnections();
   }
 
   async function handleSignOut() {
@@ -234,6 +280,63 @@ export default function SettingsPage() {
             with an API key, InkFrame automatically falls back to the others — this only changes which one goes
             first, it never removes the safety net.
           </p>
+        </div>
+
+        <div className="panel">
+          <div style={{ fontWeight: 700, marginBottom: "4px" }}>Extensions — InkframeScout</div>
+          <p className="hint" style={{ marginBottom: "14px" }}>
+            A real browser extension you install yourself. It never scans marketplace pages automatically —
+            everything it captures is one deliberate click, on the page you&apos;re already looking at. Nothing
+            is aggregated across other InkFrame accounts; what you capture stays yours until you choose to fold
+            it into a research session. Supported today: Amazon, Google Play Books, Kobo (each only where a
+            book&apos;s page is publicly visible — InkframeScout never logs into or bypasses any of them).
+          </p>
+
+          <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "8px" }}>Install</div>
+          <p className="hint" style={{ marginBottom: "14px" }}>
+            The extension source lives in this project&apos;s <code>/extension</code> folder — load it unpacked
+            from your browser&apos;s extensions page (Developer Mode → Load unpacked) since it isn&apos;t
+            published to a web store yet. See <code>/extension/README.md</code> for exact steps.
+          </p>
+
+          <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "8px" }}>Connections</div>
+          {connections === null && <p className="hint">Loading…</p>}
+          {connections?.length === 0 && !newCode && <p className="hint" style={{ marginBottom: "12px" }}>No connections yet — generate a code below and paste it into the extension&apos;s popup.</p>}
+          {connections?.map((c) => (
+            <div className="field" key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <span style={{ fontSize: "13px" }}>
+                {c.name} — <span style={{ color: c.status === "active" ? "#5fe3b8" : "var(--muted)" }}>{c.status}</span>
+                <br />
+                <span className="hint">
+                  Created {new Date(c.created_at).toLocaleDateString()}
+                  {c.last_used_at ? ` · Last used ${new Date(c.last_used_at).toLocaleString()}` : " · Never used"}
+                </span>
+              </span>
+              {c.status === "active" && (
+                <button className="btn btn-secondary" onClick={() => handleRevokeConnection(c.id)}>
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+
+          <button className="btn btn-secondary" onClick={handleGenerateCode} disabled={generatingCode} style={{ marginTop: "6px" }}>
+            {generatingCode ? "Generating…" : "Generate Connection Code"}
+          </button>
+
+          {newCode && (
+            <div style={{ marginTop: "14px", background: "rgba(76,139,255,.08)", border: "1px solid rgba(76,139,255,.25)", borderRadius: "10px", padding: "14px" }}>
+              <p className="hint" style={{ marginBottom: "8px" }}>
+                Paste this into the InkframeScout extension&apos;s popup. It&apos;s shown only once — copy it now.
+              </p>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <code style={{ fontSize: "12px", wordBreak: "break-all", flex: 1 }}>{newCode}</code>
+                <button className="btn btn-secondary" onClick={handleCopyCode}>
+                  {codeCopied ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="panel">

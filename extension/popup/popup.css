@@ -1,0 +1,102 @@
+/* InkframeScout — blue + black brand identity (never the orange of the UX reference material). */
+:root {
+  --blue: #2f6fed;
+  --blue-glow: #4c8bff;
+  --black: #060a14;
+  --panel: #0d1424;
+  --border: #1c2740;
+  --ink: #f2f4fa;
+  --muted: #8d96ab;
+  --green: #3ddc9a;
+  --yellow: #ffc266;
+  --red: #e2536b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, "Segoe UI", Inter, Arial, sans-serif; }
+
+body {
+  width: 320px;
+  background: var(--black);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.logo { font-weight: 800; font-size: 15px; }
+.logo .ink { color: var(--blue-glow); }
+.logo .scout { color: var(--ink); }
+
+main { padding: 16px; }
+
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+
+input[type="text"] {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+button {
+  width: 100%;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  margin-top: 10px;
+}
+button.primary { background: linear-gradient(135deg, var(--blue-glow), var(--blue)); color: #fff; }
+button.primary:disabled { opacity: 0.5; cursor: default; }
+button.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  flex: 1;
+}
+
+.hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.hint.small { font-size: 11px; margin-top: 12px; }
+.error { color: var(--red); font-size: 12px; margin-top: 8px; }
+.result { font-size: 12px; margin-top: 8px; }
+.result.success { color: var(--green); }
+.result.error { color: var(--red); }
+
+.status-row { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.page-status {
+  margin: 12px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.page-status.supported { color: var(--blue-glow); border-color: rgba(76,139,255,.3); }
+
+.footer-actions { display: flex; gap: 8px; margin-top: 14px; }

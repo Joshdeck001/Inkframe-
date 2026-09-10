@@ -2,8 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateStructured, resolvePreferredProviderForUser, type ToolSpec } from "@/lib/ai-client";
 import { searchWeb } from "@/lib/web-research-client";
 import { wordFrequency, phraseFrequency, clusterKeywords } from "@/lib/research-frequency";
-import { findGaps, type CompetitorEvidence } from "@/lib/research-gaps";
+import { findGaps, computeCoverageMatrix, type CompetitorEvidence } from "@/lib/research-gaps";
 import { scoreOpportunity } from "@/lib/research-opportunity";
+import { computePlatformBreakdown, normalizePlatform } from "@/lib/research-platforms";
+import { scoreKeywords } from "@/lib/research-keywords";
 import { generateResearchReport } from "@/lib/research-report";
 
 /**
@@ -140,6 +142,10 @@ export async function runExtractionStage(supabase: SupabaseClient, session: Rese
         author: c.author || null,
         positioning: c.positioning || null,
         source_url: c.source_url || null,
+        // Inferred from the URL's own domain, never guessed — a real
+        // parse of a real link, so cross-platform intelligence has
+        // something to work with even from AI-extracted rows.
+        platform: normalizePlatform(c.source_url),
         source_type: sourceType,
         confidence,
       }))
@@ -167,14 +173,23 @@ export async function runExtractionStage(supabase: SupabaseClient, session: Rese
 // the user added by hand). No AI call.
 // ---------------------------------------------------------------------------
 export async function runAnalysisStage(supabase: SupabaseClient, session: ResearchSession): Promise<{ detail: string }> {
-  const [{ data: competitors }, { data: keywords }] = await Promise.all([
-    supabase.from("competitor_research").select("title, content_gap, recurring_complaints, strengths, positioning").eq("session_id", session.id),
-    supabase.from("keyword_research").select("keyword, demand_signal").eq("session_id", session.id),
+  const [{ data: competitors }, { data: keywords }, { data: chapters }] = await Promise.all([
+    supabase.from("competitor_research").select("title, content_gap, recurring_complaints, strengths, positioning, platform").eq("session_id", session.id),
+    supabase.from("keyword_research").select("keyword, demand_signal, competition_signal, platform").eq("session_id", session.id),
+    // Manuscript-as-evidence: when this session is linked to a project that
+    // already has written chapters, their real content joins the corpus
+    // instead of requiring a separate upload flow — the same evidence, one
+    // less step. Titles only (not full prose) to keep the corpus about
+    // topic/keyword signal, not accidentally quoting the manuscript itself.
+    session.project_id
+      ? supabase.from("chapters").select("title").eq("project_id", session.project_id)
+      : Promise.resolve({ data: null }),
   ]);
 
   const titles = (competitors ?? []).map((c) => c.title).filter(Boolean) as string[];
   const keywordList = (keywords ?? []).map((k) => k.keyword).filter(Boolean) as string[];
-  const corpus = [...titles, ...keywordList];
+  const chapterTitles = (chapters ?? []).map((c) => c.title).filter(Boolean) as string[];
+  const corpus = [...titles, ...keywordList, ...chapterTitles];
 
   const clusters = clusterKeywords(keywordList);
   const gaps = findGaps(clusters, (competitors ?? []) as CompetitorEvidence[]);
@@ -192,6 +207,10 @@ export async function runAnalysisStage(supabase: SupabaseClient, session: Resear
     trigrams: phraseFrequency(corpus, 3, 10),
   };
 
+  const platformBreakdown = computePlatformBreakdown(competitors ?? [], keywords ?? []);
+  const keywordIntelligence = scoreKeywords(keywords ?? []);
+  const coverageMatrix = computeCoverageMatrix((competitors ?? []) as { title: string; strengths: string | null; content_gap: string | null }[]);
+
   await supabase.from("research_findings").upsert(
     {
       session_id: session.id,
@@ -199,11 +218,16 @@ export async function runAnalysisStage(supabase: SupabaseClient, session: Resear
       frequency,
       gaps,
       opportunity_score: opportunity,
+      platform_breakdown: platformBreakdown,
+      keyword_intelligence: keywordIntelligence,
+      coverage_matrix: coverageMatrix,
     },
     { onConflict: "session_id" }
   );
 
-  return { detail: `${clusters.length} keyword cluster(s), ${gaps.length} gap(s) found, opportunity score ${opportunity.overall}/100.` };
+  return {
+    detail: `${clusters.length} keyword cluster(s), ${gaps.length} gap(s) found, opportunity score ${opportunity.overall}/100${chapterTitles.length ? ` (incl. ${chapterTitles.length} chapter title(s) from the linked project)` : ""}.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +282,8 @@ export async function runConceptsStage(supabase: SupabaseClient, session: Resear
     `Keyword clusters: ${JSON.stringify(findings.keyword_clusters).slice(0, 2000)}`,
     `Content gaps: ${JSON.stringify(findings.gaps).slice(0, 2000)}`,
     `Opportunity score: ${JSON.stringify(findings.opportunity_score).slice(0, 1000)}`,
+    `Content-depth coverage across competitors (beginner/setup/intermediate/troubleshooting/advanced): ${JSON.stringify(findings.coverage_matrix).slice(0, 1500)}`,
+    `Platform evidence breakdown (only platforms with real tagged evidence, others omitted rather than guessed): ${JSON.stringify((findings.platform_breakdown as { hasEvidence: boolean }[] | null)?.filter((p) => p.hasEvidence)).slice(0, 1000)}`,
   ].join("\n\n");
 
   const { output } = await generateStructured<{ concepts: ResearchConcept[] }>({

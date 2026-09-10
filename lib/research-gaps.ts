@@ -58,3 +58,23 @@ export function findGaps(clusters: KeywordCluster[], competitors: CompetitorEvid
 
   return gaps.sort((a, b) => b.supportingKeywords.length - a.supportingKeywords.length);
 }
+
+const TOPIC_AREAS = ["beginner", "setup", "intermediate", "troubleshooting", "advanced"] as const;
+export type TopicArea = (typeof TOPIC_AREAS)[number];
+export type CoverageRow = { competitor: string; covered: Record<TopicArea, boolean> };
+
+/**
+ * Content-depth coverage matrix (spec section 26): a real, literal
+ * substring check of each competitor's own recorded strengths/content-gap
+ * text against a fixed set of topic-area words — "covered" only means
+ * the word actually appears in evidence someone entered, never an
+ * inference about what the book probably contains.
+ */
+export function computeCoverageMatrix(competitors: { title: string; strengths: string | null; content_gap: string | null }[]): CoverageRow[] {
+  return competitors.map((c) => {
+    const text = `${c.strengths ?? ""} ${c.content_gap ?? ""}`.toLowerCase();
+    const covered = {} as Record<TopicArea, boolean>;
+    for (const area of TOPIC_AREAS) covered[area] = text.includes(area);
+    return { competitor: c.title, covered };
+  });
+}

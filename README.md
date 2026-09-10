@@ -1516,6 +1516,100 @@ AI-calling stages (extraction, concepts, report) are verified by
 typecheck and code review only — this sandbox has no live AI provider
 credentials to exercise them end-to-end against a real model.
 
+## Publishing Intelligence Research Department: a virtual team, not ten AI calls
+
+The next spec (61 sections) reframed Research as a "team of specialized
+publishing researchers" — a Research Director, Amazon/Google/Kobo
+Specialists, a Keyword Intelligence Specialist, a Competition Analyst, a
+Reader Intelligence Specialist, a Trend Analyst, a Product Strategist, a
+Metadata Strategist, a Quality-Control Researcher, and a "Chief Research
+Officer" final synthesis. Read closely, almost everything it actually
+asks for was already real after the prior round's staged agent
+(discovery → extraction → analysis → concepts → report, evidence
+provenance, opportunity scoring, background jobs, research → project/
+writing/metadata/cover). This round's real decision was architectural:
+**do not literally spin up ten separate AI-calling modules for ten named
+roles.** That would be slower, far more expensive per session, and just
+as much an anti-pattern as the "one giant prompt" this project already
+rejects — the fix for too-big prompts is real verifiable stages (already
+built), not one AI call per job title. So the "team" is represented by
+what each role's responsibility maps to in the existing six-stage
+pipeline and the report's now-more-specific sections, documented here
+rather than built as ten redundant services.
+
+**What's genuinely new this round** — all of it real, deterministic
+computation or evidence-gated synthesis, nothing fabricated to fill a
+table:
+
+- **Cross-platform intelligence, honestly gated.** `competitor_research`
+  already had a `platform` column since the prior round's schema;
+  `keyword_research` now has one too (migration `0020`), and both the
+  add-evidence forms and the extraction stage (which infers a platform
+  from a source URL's actual domain — `lib/research-platforms.ts`'s
+  `normalizePlatform`, a real parse, never a guess) populate it.
+  `computePlatformBreakdown()` tallies real tagged rows per platform; a
+  platform with zero tagged evidence reports `hasEvidence: false` and the
+  report generator is instructed to write "insufficient evidence" for
+  it — never a borrowed general finding dressed up as Amazon-specific,
+  and never an invented scorecard number (spec sections 19/49's own hard
+  requirement).
+- **Keyword intelligence** (`lib/research-keywords.ts`): deterministic
+  intent classification (informational/commercial/transactional/
+  comparison/problem-solving/beginner/advanced/audience-specific) via
+  real pattern matching, plus a specificity score computed purely from
+  phrase length — the one dimension from the spec's own keyword-scoring
+  example (section 10) that has a real, defensible basis. The other
+  dimensions that example wants numeric scores for (relevance, intent
+  confidence, commercial score) don't have any real signal to derive them
+  from, so they're surfaced as booleans (a real demand/competition signal
+  was or wasn't actually entered) instead of an invented composite —
+  section 33's "NO FAKE DATA" hard requirement wins over section 10's
+  illustrative numbers where they conflict.
+- **Content-depth coverage matrix** (`lib/research-gaps.ts`): a real
+  substring check of each competitor's own recorded strengths/gap text
+  against five standard topic areas (beginner/setup/intermediate/
+  troubleshooting/advanced) — "covered" only ever means the word
+  literally appears in evidence someone entered.
+- **Evidence classification vocabulary**
+  (`lib/research-evidence-labels.ts`): the spec's OBSERVED/CALCULATED/
+  INFERRED/RECOMMENDED/USER INPUT/UNKNOWN labels, mapped from data this
+  app already tracked (`source_type` + `confidence`) — a display
+  function, not a new evidence concept, shown as a hover label on every
+  evidence-table badge.
+- **Manuscript-as-evidence.** A research session linked to a project now
+  folds that project's real chapter titles into the frequency/keyword
+  corpus automatically (`lib/research-agent.ts`'s analysis stage) — the
+  spec's "upload a manuscript, Research analyzes it" (test 4), covered by
+  reusing chapters the project already has rather than building a
+  separate upload-and-parse flow for research specifically.
+- **Report sections split and extended**: the prior round's one generic
+  `platform_analysis` section is now `amazon_analysis`/`google_analysis`/
+  `kobo_analysis`/`platform_scorecard` (each independently gated on real
+  tagged evidence), plus a new `chief_research_conclusion` section — the
+  spec's executive-decision block (recommended opportunity, positioning,
+  per-platform conclusion, primary keyword cluster, biggest risk, series
+  potential, confidence, next action), every line evidence-grounded or
+  explicitly marked "insufficient evidence."
+
+**Still declined, unchanged from the prior round, restated because this
+spec asked again**: no direct Amazon/Kobo scraping (still against
+Amazon's Conditions of Use), no fabricated per-platform search-volume or
+ranking data (no such API exists), no invented Kobo ranking mechanics
+(not publicly documented — the report is instructed to distinguish known
+requirements from inference whenever it mentions any), and no ten-agent
+microservice architecture (see above — consolidated into the existing
+pipeline instead).
+
+Verified with `tsc`, `eslint`, a full production build, and a real
+end-to-end integration test of the analysis stage against a fake
+Supabase client with realistic fixtures — confirming platform breakdown,
+keyword intelligence, coverage matrix, and manuscript-linked chapter
+titles all compute correctly together in one run, that a URL like
+`kobo.com/...` really does normalize to Kobo while an unrelated domain
+normalizes to nothing (never a guessed platform), and that all of the
+prior round's frequency/clustering/gap engines still pass their original
+assertions unchanged.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

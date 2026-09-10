@@ -7,6 +7,7 @@ import { sharedSecondaryCss } from "@/content/shared-secondary.css";
 import { useMyProjects } from "@/lib/useMyProjects";
 import ProjectPicker from "@/lib/ProjectPicker";
 import type { ResearchReport } from "@/lib/research-report";
+import { classifyEvidence } from "@/lib/research-evidence-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -45,11 +46,14 @@ type Findings = {
   opportunity_score: { overall: number; dimensions: ScoreDimension[]; disclaimer: string };
   concepts: Concept[];
   quality: { coveragePct?: number; evidenceQuality?: string; freshness?: string; confidence?: string; limitations?: string[] };
+  platform_breakdown: { platform: string; competitorCount: number; keywordCount: number; keywordsWithDemandSignal: number; hasEvidence: boolean }[];
+  keyword_intelligence: { keyword: string; intent: string; specificityScore: number; hasDemandEvidence: boolean; hasCompetitionEvidence: boolean }[];
+  coverage_matrix: { competitor: string; covered: Record<string, boolean> }[];
 };
 
-type Competitor = { id: string; title: string; author: string | null; price: number | null; rating: number | null; review_count: number | null; recurring_complaints: string | null; recurring_praise: string | null; content_gap: string | null; source_url: string | null; source_type: string };
-type Keyword = { id: string; keyword: string; demand_signal: string | null; competition_signal: string | null; source_url: string | null; source_type: string };
-type Category = { id: string; category_name: string; rationale: string | null; source_url: string | null; source_type: string };
+type Competitor = { id: string; title: string; author: string | null; price: number | null; rating: number | null; review_count: number | null; recurring_complaints: string | null; recurring_praise: string | null; content_gap: string | null; source_url: string | null; source_type: string; confidence: string | null };
+type Keyword = { id: string; keyword: string; demand_signal: string | null; competition_signal: string | null; source_url: string | null; source_type: string; confidence: string | null };
+type Category = { id: string; category_name: string; rationale: string | null; source_url: string | null; source_type: string; confidence: string | null };
 type Note = { id: string; research_type: string; content: string; source_type: string };
 type SavedReport = { id: string; sections: ResearchReport["sections"]; overall_assessment: string; confidence_level: string; evidence_summary: string; status: string; created_at: string };
 
@@ -74,7 +78,10 @@ const SECTION_LABEL: Record<keyof ResearchReport["sections"], string> = {
   market_overview: "Market Overview",
   niche_assessment: "Niche Assessment",
   audience: "Audience",
-  platform_analysis: "Platform Analysis",
+  amazon_analysis: "Amazon Analysis",
+  google_analysis: "Google Play Analysis",
+  kobo_analysis: "Kobo Analysis",
+  platform_scorecard: "Cross-Platform Scorecard",
   competitor_landscape: "Competitor Landscape",
   review_insights: "Reader Signals",
   market_gaps: "Content Gaps",
@@ -90,6 +97,7 @@ const SECTION_LABEL: Record<keyof ResearchReport["sections"], string> = {
   recommended_angle: "Recommended Angle",
   differentiation_strategy: "Differentiation Strategy",
   next_actions: "Next Actions",
+  chief_research_conclusion: "Chief Research Conclusion",
   final_recommendation: "Final Recommendation",
 };
 
@@ -135,8 +143,8 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [newCompetitor, setNewCompetitor] = useState({ title: "", author: "", price: "", rating: "", review_count: "", recurring_complaints: "", recurring_praise: "", content_gap: "", source_url: "" });
-  const [newKeyword, setNewKeyword] = useState({ keyword: "", demand_signal: "", competition_signal: "", source_url: "" });
+  const [newCompetitor, setNewCompetitor] = useState({ title: "", author: "", price: "", rating: "", review_count: "", recurring_complaints: "", recurring_praise: "", content_gap: "", source_url: "", platform: "" });
+  const [newKeyword, setNewKeyword] = useState({ keyword: "", demand_signal: "", competition_signal: "", source_url: "", platform: "" });
   const [newCategory, setNewCategory] = useState({ category_name: "", rationale: "", source_url: "" });
   const [error, setError] = useState<string | null>(null);
 
@@ -172,10 +180,11 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
       recurring_praise: newCompetitor.recurring_praise.trim() || null,
       content_gap: newCompetitor.content_gap.trim() || null,
       source_url: newCompetitor.source_url.trim() || null,
+      platform: newCompetitor.platform || null,
     });
     if (error) setError(error.message);
     else {
-      setNewCompetitor({ title: "", author: "", price: "", rating: "", review_count: "", recurring_complaints: "", recurring_praise: "", content_gap: "", source_url: "" });
+      setNewCompetitor({ title: "", author: "", price: "", rating: "", review_count: "", recurring_complaints: "", recurring_praise: "", content_gap: "", source_url: "", platform: "" });
       await loadAll();
     }
   }
@@ -189,10 +198,11 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
       demand_signal: newKeyword.demand_signal.trim() || null,
       competition_signal: newKeyword.competition_signal.trim() || null,
       source_url: newKeyword.source_url.trim() || null,
+      platform: newKeyword.platform || null,
     });
     if (error) setError(error.message);
     else {
-      setNewKeyword({ keyword: "", demand_signal: "", competition_signal: "", source_url: "" });
+      setNewKeyword({ keyword: "", demand_signal: "", competition_signal: "", source_url: "", platform: "" });
       await loadAll();
     }
   }
@@ -240,7 +250,7 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                     {c.recurring_complaints && <div>⚠ {c.recurring_complaints}</div>}
                     {c.recurring_praise && <div>👍 {c.recurring_praise}</div>}
                   </td>
-                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`}>{c.source_type.replace("_", " ")}</span></td>
+                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(c.source_type, c.confidence)}>{c.source_type.replace("_", " ")}</span></td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("competitor_research", c.id)}>✕</button></td>
                 </tr>
               ))}
@@ -257,6 +267,10 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
           <input placeholder="Recurring complaints" value={newCompetitor.recurring_complaints} onChange={(e) => setNewCompetitor({ ...newCompetitor, recurring_complaints: e.target.value })} />
           <input placeholder="Recurring praise" value={newCompetitor.recurring_praise} onChange={(e) => setNewCompetitor({ ...newCompetitor, recurring_praise: e.target.value })} />
           <input placeholder="Apparent content gap" value={newCompetitor.content_gap} onChange={(e) => setNewCompetitor({ ...newCompetitor, content_gap: e.target.value })} style={{ gridColumn: "1 / -1" }} />
+          <select value={newCompetitor.platform} onChange={(e) => setNewCompetitor({ ...newCompetitor, platform: e.target.value })} style={{ gridColumn: "1 / -1" }}>
+            <option value="">Where did you find this? (optional, powers cross-platform intelligence)</option>
+            {Object.entries(PLATFORM_LABELS).filter(([k]) => k !== "web").map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
           <button className="btn btn-secondary" type="submit" style={{ gridColumn: "1 / -1" }}>+ Add Competitor</button>
         </form>
       </div>
@@ -272,7 +286,7 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                   <td>{k.keyword}</td>
                   <td>{k.demand_signal || "DATA NOT AVAILABLE"}</td>
                   <td>{k.competition_signal || "DATA NOT AVAILABLE"}</td>
-                  <td><span className={`badge ${k.source_type === "user_provided" ? "active" : "user"}`}>{k.source_type.replace("_", " ")}</span></td>
+                  <td><span className={`badge ${k.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(k.source_type, k.confidence)}>{k.source_type.replace("_", " ")}</span></td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("keyword_research", k.id)}>✕</button></td>
                 </tr>
               ))}
@@ -284,6 +298,10 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
           <input placeholder="Source URL" value={newKeyword.source_url} onChange={(e) => setNewKeyword({ ...newKeyword, source_url: e.target.value })} />
           <input placeholder="Demand signal (what you observed)" value={newKeyword.demand_signal} onChange={(e) => setNewKeyword({ ...newKeyword, demand_signal: e.target.value })} />
           <input placeholder="Competition signal" value={newKeyword.competition_signal} onChange={(e) => setNewKeyword({ ...newKeyword, competition_signal: e.target.value })} />
+          <select value={newKeyword.platform} onChange={(e) => setNewKeyword({ ...newKeyword, platform: e.target.value })} style={{ gridColumn: "1 / -1" }}>
+            <option value="">Where did you find this? (optional, powers cross-platform intelligence)</option>
+            {Object.entries(PLATFORM_LABELS).filter(([k]) => k !== "web").map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
           <button className="btn btn-secondary" type="submit" style={{ gridColumn: "1 / -1" }}>+ Add Keyword</button>
         </form>
       </div>
@@ -298,7 +316,7 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                 <tr key={c.id}>
                   <td>{c.category_name}</td>
                   <td style={{ fontSize: "12px" }}>{c.rationale || "—"}</td>
-                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`}>{c.source_type.replace("_", " ")}</span></td>
+                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(c.source_type, c.confidence)}>{c.source_type.replace("_", " ")}</span></td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("category_research", c.id)}>✕</button></td>
                 </tr>
               ))}
@@ -658,6 +676,63 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
               </div>
             ))}
           </div>
+
+          {findings.platform_breakdown?.some((p) => p.hasEvidence) && (
+            <div className="panel">
+              <div style={{ fontWeight: 700, marginBottom: "4px" }}>Cross-Platform Evidence</div>
+              <p className="hint" style={{ marginBottom: "10px" }}>Only counts platforms with real tagged evidence — a platform with none isn&apos;t shown here at all.</p>
+              {findings.platform_breakdown.filter((p) => p.hasEvidence).map((p) => (
+                <div className="check-row" key={p.platform}>
+                  <span>{PLATFORM_LABELS[p.platform] ?? p.platform}</span>
+                  <span>{p.competitorCount} competitor(s), {p.keywordCount} keyword(s) ({p.keywordsWithDemandSignal} with demand evidence)</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {findings.keyword_intelligence?.length > 0 && (
+            <div className="panel">
+              <div style={{ fontWeight: 700, marginBottom: "10px" }}>Keyword Intelligence</div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="admin-table">
+                  <thead><tr><th>Keyword</th><th>Intent</th><th>Specificity</th><th>Demand evidence</th><th>Competition evidence</th></tr></thead>
+                  <tbody>
+                    {findings.keyword_intelligence.map((k) => (
+                      <tr key={k.keyword}>
+                        <td>{k.keyword}</td>
+                        <td style={{ textTransform: "capitalize" }}>{k.intent.replace(/_/g, " ")}</td>
+                        <td>{k.specificityScore}/100</td>
+                        <td>{k.hasDemandEvidence ? "✓" : "—"}</td>
+                        <td>{k.hasCompetitionEvidence ? "✓" : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {findings.coverage_matrix?.length > 0 && (
+            <div className="panel">
+              <div style={{ fontWeight: 700, marginBottom: "4px" }}>Content-Depth Coverage</div>
+              <p className="hint" style={{ marginBottom: "10px" }}>Real substring matches against each competitor&apos;s own recorded strengths/gap text — never a guess at what a book probably covers.</p>
+              <div style={{ overflowX: "auto" }}>
+                <table className="admin-table">
+                  <thead><tr><th>Competitor</th><th>Beginner</th><th>Setup</th><th>Intermediate</th><th>Troubleshooting</th><th>Advanced</th></tr></thead>
+                  <tbody>
+                    {findings.coverage_matrix.map((row) => (
+                      <tr key={row.competitor}>
+                        <td>{row.competitor}</td>
+                        {["beginner", "setup", "intermediate", "troubleshooting", "advanced"].map((area) => (
+                          <td key={area}>{row.covered[area] ? "✓" : "—"}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="panel">
             <div style={{ fontWeight: 700, marginBottom: "10px" }}>Recommended Opportunities ({findings.concepts.length})</div>

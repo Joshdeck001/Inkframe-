@@ -10,7 +10,10 @@ export type ResearchReportSections = {
   market_overview: string;
   niche_assessment: string;
   audience: string;
-  platform_analysis: string;
+  amazon_analysis: string;
+  google_analysis: string;
+  kobo_analysis: string;
+  platform_scorecard: string;
   competitor_landscape: string;
   review_insights: string;
   market_gaps: string;
@@ -26,6 +29,7 @@ export type ResearchReportSections = {
   recommended_angle: string;
   differentiation_strategy: string;
   next_actions: string;
+  chief_research_conclusion: string;
   final_recommendation: string;
 };
 
@@ -49,9 +53,21 @@ const REPORT_TOOL: ToolSpec = {
           market_overview: { type: "string" },
           niche_assessment: { type: "string" },
           audience: { type: "string" },
-          platform_analysis: {
+          amazon_analysis: {
             type: "string",
-            description: "Only distinguish per-platform (Amazon/Google Play/Kobo) conclusions where the evidence given actually says which platform it came from — otherwise say plainly that findings are general web/AI-knowledge, not platform-specific.",
+            description: "Only write real Amazon-specific conclusions if the platform evidence breakdown given actually shows Amazon-tagged rows. If it doesn't, say plainly 'insufficient evidence tagged to Amazon' — never fill this with general findings dressed up as Amazon-specific.",
+          },
+          google_analysis: {
+            type: "string",
+            description: "Same rule as amazon_analysis, for Google Play — only real evidence, honestly say insufficient evidence otherwise. Focus on search/discovery intent (natural keyword relevance, long-tail questions), never keyword-stuffing advice.",
+          },
+          kobo_analysis: {
+            type: "string",
+            description: "Same rule as amazon_analysis, for Kobo. Never invent Kobo's ranking mechanics — they aren't publicly documented; distinguish known requirements from inference explicitly if you mention any.",
+          },
+          platform_scorecard: {
+            type: "string",
+            description: "A plain-text comparison table across Amazon/Google Play/Kobo using ONLY the platform evidence breakdown given (competitor/keyword counts actually tagged to each). Any platform with hasEvidence=false must show 'N/A — insufficient evidence' in every column, never a filled-in number.",
           },
           competitor_landscape: { type: "string", description: "Synthesize ONLY from the competitor rows given — say so plainly if none were provided." },
           review_insights: { type: "string", description: "Aggregate patterns from the review-related fields given, never a fabricated quote." },
@@ -71,17 +87,22 @@ const REPORT_TOOL: ToolSpec = {
           recommended_angle: { type: "string" },
           differentiation_strategy: { type: "string" },
           next_actions: { type: "string", description: "Concrete next steps the author could take — e.g. 'add more competitor rows', 'run keyword research', 'approve an opportunity and create a project'." },
+          chief_research_conclusion: {
+            type: "string",
+            description: "A concise executive decision block, in this exact shape as plain text with each label on its own line: Recommended opportunity / Primary audience / Best positioning / Amazon / Google / Kobo / Primary keyword cluster / Major competitive advantage / Biggest risk / Series potential / Confidence / Recommended next action. Every line must be grounded in evidence actually given above — write 'insufficient evidence' for any line that isn't.",
+          },
           final_recommendation: {
             type: "string",
             description: "Use evidence-based language ('the available evidence suggests', 'additional research recommended') — never guarantee success or sales.",
           },
         },
         required: [
-          "executive_summary", "market_overview", "niche_assessment", "audience", "platform_analysis",
+          "executive_summary", "market_overview", "niche_assessment", "audience", "amazon_analysis",
+          "google_analysis", "kobo_analysis", "platform_scorecard",
           "competitor_landscape", "review_insights", "market_gaps", "keyword_opportunities", "keyword_frequency",
           "title_patterns", "category_opportunities", "pricing_positioning", "trend_signals",
           "bundle_and_series_opportunities", "risks", "opportunities", "recommended_angle",
-          "differentiation_strategy", "next_actions", "final_recommendation",
+          "differentiation_strategy", "next_actions", "chief_research_conclusion", "final_recommendation",
         ],
       },
       overall_assessment: {
@@ -226,6 +247,9 @@ export async function generateResearchReport(
         `Top word/phrase frequency: ${JSON.stringify((findings.frequency as { top?: unknown }).top ?? findings.frequency).slice(0, 1500)}`,
         `Content gaps found (${(findings.gaps as unknown[]).length}): ${JSON.stringify(findings.gaps).slice(0, 1500)}`,
         `Opportunity score: ${JSON.stringify(findings.opportunity_score).slice(0, 1000)}`,
+        `Content-depth coverage matrix (real substring matches against competitor-entered text, beginner/setup/intermediate/troubleshooting/advanced): ${JSON.stringify(findings.coverage_matrix).slice(0, 1500)}`,
+        `Platform evidence breakdown — ONLY these platforms have real tagged evidence; any platform not listed here has ZERO evidence and its section/scorecard row must say "insufficient evidence", never a guess: ${JSON.stringify((findings.platform_breakdown as { hasEvidence: boolean }[] | null)?.filter((p) => p.hasEvidence)).slice(0, 1000)}`,
+        `Keyword intelligence (real intent classification + specificity from phrase length; hasDemandEvidence/hasCompetitionEvidence show whether a real signal was entered): ${JSON.stringify(findings.keyword_intelligence).slice(0, 1500)}`,
         findings.concepts && (findings.concepts as unknown[]).length
           ? `Recommended concepts already generated: ${JSON.stringify(findings.concepts).slice(0, 2000)}`
           : "No concepts generated yet.",
@@ -239,13 +263,16 @@ export async function generateResearchReport(
 
   const { output } = await generateStructured<ResearchReport>({
     system:
-      "You are InkFrame's Research Department, building an evidence-based research report. Use ONLY the " +
-      "evidence given below — real competitor/keyword/category rows, computed frequency/gap/opportunity " +
-      "numbers, and live web search results only if marked available. Never invent competitors, review " +
-      "quotes, search volumes, sales data, or trend directions not supported by the evidence. Where evidence " +
-      "is thin, say so plainly and use 'insufficient_data' rather than a confident-sounding guess. Never " +
-      "claim or imply a guaranteed sales outcome — frame everything as decision support. Call the " +
-      "build_research_report tool.",
+      "You are InkFrame's Research Department, building an evidence-based research report — act as the " +
+      "final synthesis step of a research team (market/platform/keyword/competition/reader-signal/quality " +
+      "specialists), not a single guesser. Use ONLY the evidence given below — real competitor/keyword/" +
+      "category rows, computed frequency/gap/opportunity/platform/keyword-intelligence numbers, and live web " +
+      "search results only if marked available. Never invent competitors, review quotes, search volumes, " +
+      "sales data, or trend directions not supported by the evidence. A platform (Amazon/Google Play/Kobo) " +
+      "with no tagged evidence gets 'insufficient evidence', never a filled-in number or a borrowed general " +
+      "finding. Where evidence is thin, say so plainly and use 'insufficient_data' rather than a confident-" +
+      "sounding guess. Never claim or imply a guaranteed sales outcome — frame everything as decision " +
+      "support. Call the build_research_report tool.",
     userContent: evidenceBlock,
     tool: REPORT_TOOL,
     maxTokens: 4500,

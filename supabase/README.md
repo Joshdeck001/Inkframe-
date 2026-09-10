@@ -120,6 +120,14 @@
      `session_id` column, a check that at least one is set) — the exact
      same evidence/report tables from `0016`, not a second schema. See
      "Research Intelligence" in the root `README.md`.
+   - `supabase/migrations/0020_research_platform_intelligence.sql` — adds
+     `keyword_research.platform` (competitor_research already had one)
+     and three more `research_findings` columns
+     (`platform_breakdown`/`keyword_intelligence`/`coverage_matrix`) for
+     the real, evidence-gated cross-platform and keyword-intent
+     computations `lib/research-agent.ts`'s analysis stage now runs. See
+     "Publishing Intelligence Research Department" in the root
+     `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

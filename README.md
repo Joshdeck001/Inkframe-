@@ -1836,6 +1836,61 @@ files were also validated as syntactically real (`node --check`, a
 parsed `manifest.json`) and its three PNG icons confirmed as genuine,
 valid image files, not placeholders.
 
+## InkframeScout v2 — Market Snapshots and cross-platform matching, same boundary held
+
+A second, larger spec ("MASTER IMPLEMENTATION SPECIFICATION," 101
+sections) re-asked for the same automatic/continuous scanning declined
+above — an "Automatic Detection" ON/OFF toggle, and a "Scan This Page"
+action that extracts every book on a search or category page in one call
+— plus a new analytics layer on top (Market Snapshots, BSR/price/ranking
+history, cross-platform canonical book matching, an "Inkframe
+Intelligence Score," adapter health dashboards). This was put to the
+user again rather than silently rebuilt a second time: automatic
+detection and "scan this page for every book" are the same category of
+automated, systematic extraction already declined, regardless of the
+analytics built on top of it, and a fabricated BSR-estimation or
+Intelligence Score would violate the standing no-fabricated-data rule
+even if the collection mechanism were allowed. The user chose to extend
+v1 within its existing, ToS-defensible limits rather than cross that
+line or drop the round entirely.
+
+**What v2 actually adds, all still one deliberate click per book:**
+
+- **Market Snapshots** (`scout_snapshots`, migration `0023`) — an
+  optional label the user attaches in the popup before clipping, so
+  clips captured while comparing a set of books in one browsing session
+  stay grouped in Research's "My Clips" panel. It's a column on
+  `scout_clips`, not a second capture mechanism — still one click, one
+  row, per book.
+- **ISBN extraction** — `extract.js` now also reads the ISBN already
+  printed on the page (same click, same read-only rule as every other
+  field) via a generic "ISBN[-13/-10]: ..." text scan that works across
+  all three marketplaces' differing layouts without guessing a
+  marketplace-specific selector. Still null, never fabricated, when the
+  label isn't visible.
+- **Cross-platform matching** (`lib/scout-matching.ts`) — groups the
+  user's own already-captured clips that are almost certainly the same
+  book: an exact ISBN match is labeled high confidence; without one, a
+  normalized title+author match across two different marketplaces is
+  shown as a low-confidence "possible match, unconfirmed" — never
+  presented as certain.
+- **Observed price history** — when the user has clipped the *same*
+  listing (same marketplace + product id) more than once over time, the
+  real, timestamped price points from those clips are shown as an actual
+  history. This is genuine historical data the user themselves observed,
+  not an estimate — categorically different from the spec's BSR/sales
+  history feature, which would need continuous background collection to
+  populate honestly.
+
+**Declined again, same reasons as v1:** the Automatic Detection toggle,
+"Scan This Page" for multiple books at once, background/overlay
+injection into marketplace pages, BSR and sales-rank estimation, and the
+"Inkframe Intelligence Score" (there is no real, defensible formula for a
+single score blending price/rating/rank/trend without fabricating the
+weighting or the missing inputs). Adapter health/versioning dashboards
+were also skipped — they exist in the spec to monitor a fleet of
+continuously-running scrapers, which InkframeScout deliberately isn't.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

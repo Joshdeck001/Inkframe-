@@ -147,6 +147,15 @@
      "InkframeScout" in the root `README.md` for why this is a
      single-click clipper, not the automated marketplace-scanning
      extension originally specced.
+   - `supabase/migrations/0023_inkframescout_snapshots.sql` — adds
+     `scout_snapshots` (an optional label the user attaches to a group of
+     clips captured while comparing books in one browsing session) and
+     `scout_clips.snapshot_id`/`scout_clips.isbn`. Still one row per one
+     deliberate click — a snapshot is a grouping label, not a second
+     capture mechanism. `isbn` powers real cross-platform matching
+     between clips of the same book on different marketplaces
+     (`lib/scout-matching.ts`); see "InkframeScout v2" in the root
+     `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

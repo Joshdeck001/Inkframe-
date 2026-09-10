@@ -11,7 +11,7 @@ export type EvidenceClassification = "OBSERVED" | "CALCULATED" | "INFERRED" | "R
 
 export function classifyEvidence(sourceType: string, confidence: string | null | undefined): EvidenceClassification {
   if (sourceType === "user_provided") return "USER INPUT";
-  if (sourceType === "live_web") return "OBSERVED";
+  if (sourceType === "live_web" || sourceType === "browser_clip") return "OBSERVED";
   if (sourceType === "ai_inference") {
     if (!confidence || confidence === "insufficient_data") return "UNKNOWN";
     if (confidence === "high" || confidence === "medium") return "INFERRED";

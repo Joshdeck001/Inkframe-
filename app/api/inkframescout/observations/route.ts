@@ -24,7 +24,7 @@ export const POST = withJsonErrors(async (request: Request) => {
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
   const body = await request.json();
-  const { marketplace, source_url, title, author, external_id, price, currency, category, rating, review_count, raw_fields } = body;
+  const { marketplace, source_url, title, author, external_id, isbn, price, currency, category, rating, review_count, raw_fields, snapshot_id } = body;
 
   if (!MARKETPLACES.includes(marketplace)) return NextResponse.json({ error: `marketplace must be one of: ${MARKETPLACES.join(", ")}` }, { status: 400 });
   if (typeof source_url !== "string" || !source_url) return NextResponse.json({ error: "source_url is required" }, { status: 400 });
@@ -32,6 +32,14 @@ export const POST = withJsonErrors(async (request: Request) => {
   const service = createServiceClient();
   const resolved = await resolveConnection(service, token);
   if (!resolved) return NextResponse.json({ error: "Connection is invalid or revoked." }, { status: 401 });
+
+  let snapshotId: string | null = null;
+  if (typeof snapshot_id === "string" && snapshot_id) {
+    // Never trust a client-supplied id blindly — confirm this user actually owns it.
+    const { data: snapshot } = await service.from("scout_snapshots").select("id").eq("id", snapshot_id).eq("user_id", resolved.userId).maybeSingle();
+    if (!snapshot) return NextResponse.json({ error: "Unknown snapshot." }, { status: 400 });
+    snapshotId = snapshot.id;
+  }
 
   const { data, error } = await service
     .from("scout_clips")
@@ -43,12 +51,14 @@ export const POST = withJsonErrors(async (request: Request) => {
       title: typeof title === "string" ? title.slice(0, 500) : null,
       author: typeof author === "string" ? author.slice(0, 300) : null,
       external_id: typeof external_id === "string" ? external_id.slice(0, 100) : null,
+      isbn: typeof isbn === "string" ? isbn.slice(0, 20) : null,
       price: typeof price === "number" ? price : null,
       currency: typeof currency === "string" ? currency.slice(0, 10) : null,
       category: typeof category === "string" ? category.slice(0, 300) : null,
       rating: typeof rating === "number" ? rating : null,
       review_count: typeof review_count === "number" ? review_count : null,
       raw_fields: raw_fields && typeof raw_fields === "object" ? raw_fields : {},
+      snapshot_id: snapshotId,
     })
     .select("id")
     .single();

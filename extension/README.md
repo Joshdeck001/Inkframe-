@@ -31,6 +31,17 @@ category of tool: closer to a personal clipping/bookmarking action than to
 a scraper. If InkFrame ever adds an officially supported marketplace data
 API, that would be the right way to go further than this.
 
+A second, larger spec later asked for the same automatic/continuous
+scanning again (an "Automatic Detection" toggle, "Scan This Page" for
+every book on a results page) plus a BSR-history/Intelligence-Score
+analytics layer on top. That mechanism was declined again, for the same
+reason. What *was* added on top of the one-click model: optional **Market
+Snapshots** to group clips from one comparison session, ISBN extraction
+(read off the already-rendered page, same as every other field) for real
+cross-platform book matching, and observed price history built only from
+the user's own repeated clips over time — see "InkframeScout v2" in the
+root `README.md`.
+
 ## Architecture
 
 ```

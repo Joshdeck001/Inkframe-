@@ -30,6 +30,22 @@
     return match ? Number(match[0]) : null;
   }
 
+  /**
+   * ISBN is printed as visible text on all three marketplaces' book detail
+   * pages, in slightly different layouts (a spec row, a metadata list, a
+   * plain label). Rather than one brittle selector per site, this scans
+   * the already-rendered page's own text for the standard "ISBN[-13/-10]:"
+   * label and returns the digits that follow — still a read of what's on
+   * screen at the moment of the click, nothing fetched or guessed. Returns
+   * null (never a fabricated value) if the label isn't present.
+   */
+  function extractIsbn() {
+    const bodyText = document.body.innerText || "";
+    const match = bodyText.match(/ISBN(?:-13|-10)?\s*[:\-]?\s*([0-9][0-9 \-]{8,16}[0-9Xx])/i);
+    if (!match) return null;
+    return match[1].replace(/[\s-]/g, "");
+  }
+
   function extractAmazon() {
     const asinMatch = window.location.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
     const priceText = text([
@@ -51,6 +67,7 @@
       category,
       rating: num([".a-icon-alt", "#acrPopover .a-icon-alt"]),
       review_count: num(["#acrCustomerReviewText"]),
+      isbn: extractIsbn(),
       raw_fields: {
         breadcrumbs: category,
         format: text(["#formats .a-button-selected .a-button-text", "#tmm-grid-swatch-DEFAULT .slot-title"]),
@@ -72,6 +89,7 @@
       category: text(["a[href*='/store/books/collection/promotion']", ".category"]),
       rating: num(["div[aria-label*='star']", ".rating"]),
       review_count: num([".review-count"]),
+      isbn: extractIsbn(),
       raw_fields: {},
     };
   }
@@ -89,6 +107,7 @@
       category: text([".category-links a", ".breadcrumbs"]),
       rating: num([".rating-star-container", "[itemprop='ratingValue']"]),
       review_count: num([".reviews-count"]),
+      isbn: extractIsbn(),
       raw_fields: {},
     };
   }

@@ -41,7 +41,8 @@ label {
   margin: 10px 0 4px;
 }
 
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   background: var(--panel);
   border: 1px solid var(--border);

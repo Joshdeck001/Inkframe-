@@ -8,6 +8,7 @@ import { useMyProjects } from "@/lib/useMyProjects";
 import ProjectPicker from "@/lib/ProjectPicker";
 import type { ResearchReport } from "@/lib/research-report";
 import { classifyEvidence } from "@/lib/research-evidence-labels";
+import { groupClipsByCanonicalBook, buildObservedPriceHistory } from "@/lib/scout-matching";
 
 export const dynamic = "force-dynamic";
 
@@ -826,24 +827,69 @@ type ScoutClip = {
   title: string | null;
   author: string | null;
   source_url: string;
+  external_id: string | null;
+  isbn: string | null;
   price: number | null;
   category: string | null;
   clipped_at: string;
+  status: string;
+  snapshot_id: string | null;
 };
+
+type ScoutSnapshot = { id: string; label: string };
+
+function CrossPlatformInsights({ clips }: { clips: ScoutClip[] }) {
+  const matches = groupClipsByCanonicalBook(clips);
+  const priceHistory = buildObservedPriceHistory(clips);
+  if (matches.length === 0 && priceHistory.length === 0) return null;
+
+  return (
+    <div className="checklist-panel" style={{ marginBottom: "14px" }}>
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Cross-Platform & Price Insights</div>
+      <p className="hint" style={{ marginBottom: "10px" }}>
+        Computed only from clips you&apos;ve already captured — no live lookups, no estimates.
+      </p>
+      {matches.map((g) => (
+        <div key={g.key} className="check-row" style={{ alignItems: "flex-start" }}>
+          <span>
+            {g.confidence === "high" ? "Same book (ISBN match): " : "Possible same book (title/author match, unconfirmed): "}
+            {g.clips.map((c) => `${PLATFORM_LABELS[c.marketplace === "google_play_books" ? "google_play" : c.marketplace] ?? c.marketplace}${c.price != null ? ` $${c.price}` : ""}`).join(" · ")}
+          </span>
+        </div>
+      ))}
+      {priceHistory.map((h) => (
+        <div key={h.key} className="check-row" style={{ alignItems: "flex-start" }}>
+          <span>
+            Observed price history ({PLATFORM_LABELS[h.marketplace === "google_play_books" ? "google_play" : h.marketplace] ?? h.marketplace}):{" "}
+            {h.observations.map((o) => `$${o.price} on ${new Date(o.clipped_at).toLocaleDateString()}`).join(" → ")}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function MyClipsPanel() {
   const supabase = createClient();
   const [clips, setClips] = useState<ScoutClip[] | null>(null);
   const [sessions, setSessions] = useState<{ id: string; topic: string }[]>([]);
+  const [snapshots, setSnapshots] = useState<ScoutSnapshot[]>([]);
   const [assigning, setAssigning] = useState<string | null>(null);
 
   async function load() {
-    const [{ data: c }, { data: s }] = await Promise.all([
-      supabase.from("scout_clips").select("id, marketplace, title, author, source_url, price, category, clipped_at").eq("status", "unassigned").order("clipped_at", { ascending: false }),
+    const [{ data: c }, { data: s }, { data: snaps }] = await Promise.all([
+      supabase
+        .from("scout_clips")
+        .select("id, marketplace, title, author, source_url, external_id, isbn, price, category, clipped_at, status, snapshot_id")
+        .neq("status", "discarded")
+        .order("clipped_at", { ascending: false })
+        .limit(200),
       supabase.from("research_sessions").select("id, topic").order("created_at", { ascending: false }).limit(30),
+      supabase.from("scout_snapshots").select("id, label").order("created_at", { ascending: false }).limit(50),
     ]);
     setClips((c as ScoutClip[]) ?? []);
     setSessions(s ?? []);
+    setSnapshots((snaps as ScoutSnapshot[]) ?? []);
   }
 
   useEffect(() => {
@@ -878,30 +924,45 @@ function MyClipsPanel() {
 
   if (clips === null || clips.length === 0) return null;
 
+  const unassigned = clips.filter((c) => c.status === "unassigned");
+  const snapshotLabel = (id: string | null) => (id ? snapshots.find((s) => s.id === id)?.label ?? "Untitled snapshot" : null);
+  const grouped = new Map<string, ScoutClip[]>();
+  for (const clip of unassigned) {
+    const key = clip.snapshot_id ?? "__none__";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(clip);
+  }
+
   return (
     <div className="panel">
-      <div style={{ fontWeight: 700, marginBottom: "4px" }}>My Clips ({clips.length})</div>
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>My Clips ({unassigned.length})</div>
       <p className="hint" style={{ marginBottom: "12px" }}>
         Captured with InkframeScout, one deliberate click at a time — file each into a research session as real
         competitor evidence, or discard it.
       </p>
-      {clips.map((clip) => (
-        <div key={clip.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
-          <div style={{ fontWeight: 600, fontSize: "13px" }}>{clip.title || clip.source_url}</div>
-          <div className="hint" style={{ fontSize: "12px", marginBottom: "8px" }}>
-            {PLATFORM_LABELS[clip.marketplace === "google_play_books" ? "google_play" : clip.marketplace] ?? clip.marketplace}
-            {clip.author ? ` · ${clip.author}` : ""}
-            {clip.price != null ? ` · $${clip.price}` : ""} · {new Date(clip.clipped_at).toLocaleString()}
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            <select onChange={(e) => e.target.value && assign(clip, e.target.value)} disabled={assigning === clip.id} defaultValue="">
-              <option value="" disabled>Assign to session…</option>
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.topic || "Open discovery"}</option>
-              ))}
-            </select>
-            <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
-          </div>
+      <CrossPlatformInsights clips={clips} />
+      {Array.from(grouped.entries()).map(([key, groupClips]) => (
+        <div key={key} style={{ marginBottom: "14px" }}>
+          {key !== "__none__" && <div className="hint" style={{ fontWeight: 700, marginBottom: "6px" }}>📸 {snapshotLabel(key)}</div>}
+          {groupClips.map((clip) => (
+            <div key={clip.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
+              <div style={{ fontWeight: 600, fontSize: "13px" }}>{clip.title || clip.source_url}</div>
+              <div className="hint" style={{ fontSize: "12px", marginBottom: "8px" }}>
+                {PLATFORM_LABELS[clip.marketplace === "google_play_books" ? "google_play" : clip.marketplace] ?? clip.marketplace}
+                {clip.author ? ` · ${clip.author}` : ""}
+                {clip.price != null ? ` · $${clip.price}` : ""} · {new Date(clip.clipped_at).toLocaleString()}
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <select onChange={(e) => e.target.value && assign(clip, e.target.value)} disabled={assigning === clip.id} defaultValue="">
+                  <option value="" disabled>Assign to session…</option>
+                  {sessions.map((s) => (
+                    <option key={s.id} value={s.id}>{s.topic || "Open discovery"}</option>
+                  ))}
+                </select>
+                <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
+              </div>
+            </div>
+          ))}
         </div>
       ))}
     </div>

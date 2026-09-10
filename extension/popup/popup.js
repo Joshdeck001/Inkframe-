@@ -19,6 +19,8 @@ const els = {
   clipsToday: document.getElementById("clips-today"),
   unassignedClips: document.getElementById("unassigned-clips"),
   pageStatus: document.getElementById("page-status"),
+  snapshotSelect: document.getElementById("snapshot-select"),
+  newSnapshotBtn: document.getElementById("new-snapshot-btn"),
   clipBtn: document.getElementById("clip-btn"),
   clipResult: document.getElementById("clip-result"),
   openInkframeBtn: document.getElementById("open-inkframe-btn"),
@@ -52,6 +54,7 @@ async function init() {
   }
   els.connectedView.hidden = false;
   await refreshStatus(apiBaseUrl, token);
+  await refreshSnapshots(apiBaseUrl, token);
   await checkCurrentTab();
 }
 
@@ -65,6 +68,27 @@ async function refreshStatus(apiBaseUrl, token) {
   } catch {
     els.clipsToday.textContent = "—";
     els.unassignedClips.textContent = "—";
+  }
+}
+
+async function refreshSnapshots(apiBaseUrl, token) {
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/inkframescout/snapshots`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error("could not load snapshots");
+    const json = await res.json();
+    const previouslySelected = els.snapshotSelect.value;
+    els.snapshotSelect.innerHTML = '<option value="">No snapshot — clip on its own</option>';
+    for (const snap of json.snapshots || []) {
+      const opt = document.createElement("option");
+      opt.value = snap.id;
+      opt.textContent = `${snap.label} (${snap.clip_count})`;
+      els.snapshotSelect.appendChild(opt);
+    }
+    if (previouslySelected && [...els.snapshotSelect.options].some((o) => o.value === previouslySelected)) {
+      els.snapshotSelect.value = previouslySelected;
+    }
+  } catch {
+    // Non-fatal — clipping still works without a snapshot selected.
   }
 }
 
@@ -103,12 +127,35 @@ els.connectBtn.addEventListener("click", async () => {
     els.setupView.hidden = true;
     els.connectedView.hidden = false;
     await refreshStatus(apiBaseUrl, code);
+    await refreshSnapshots(apiBaseUrl, code);
     await checkCurrentTab();
   } catch (e) {
     showError(els.setupError, e.message || "Could not connect.");
   } finally {
     els.connectBtn.disabled = false;
     els.connectBtn.textContent = "Connect";
+  }
+});
+
+els.newSnapshotBtn.addEventListener("click", async () => {
+  const { apiBaseUrl, token } = await getStoredAuth();
+  if (!apiBaseUrl || !token) return;
+  const label = window.prompt("Name this snapshot (e.g. \"Cozy mystery comps — Sept\"):");
+  if (!label || !label.trim()) return;
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/inkframescout/snapshots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ label: label.trim() }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Could not create snapshot.");
+    await refreshSnapshots(apiBaseUrl, token);
+    els.snapshotSelect.value = json.snapshot.id;
+  } catch (e) {
+    els.clipResult.textContent = e.message || "Could not create snapshot.";
+    els.clipResult.className = "result error";
+    els.clipResult.hidden = false;
   }
 });
 
@@ -127,10 +174,11 @@ els.clipBtn.addEventListener("click", async () => {
     const extracted = injection?.result;
     if (!extracted || extracted.error) throw new Error(extracted?.error || "Could not read this page.");
 
+    const snapshotId = els.snapshotSelect.value || null;
     const res = await fetch(`${apiBaseUrl}/api/inkframescout/observations`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(extracted),
+      body: JSON.stringify({ ...extracted, snapshot_id: snapshotId }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Could not save this clip.");
@@ -139,6 +187,7 @@ els.clipBtn.addEventListener("click", async () => {
     els.clipResult.className = "result success";
     els.clipResult.hidden = false;
     await refreshStatus(apiBaseUrl, token);
+    await refreshSnapshots(apiBaseUrl, token);
   } catch (e) {
     els.clipResult.textContent = e.message || "Could not clip this page.";
     els.clipResult.className = "result error";

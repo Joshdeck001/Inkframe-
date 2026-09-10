@@ -8,6 +8,7 @@
  */
 
 const SUPPORTED_HOSTS = ["amazon.", "play.google.com", "kobo.com"];
+let collectionPaused = false;
 
 const els = {
   setupView: document.getElementById("setup-view"),
@@ -19,6 +20,7 @@ const els = {
   clipsToday: document.getElementById("clips-today"),
   unassignedClips: document.getElementById("unassigned-clips"),
   pageStatus: document.getElementById("page-status"),
+  pendingCount: document.getElementById("pending-count"),
   snapshotSelect: document.getElementById("snapshot-select"),
   newSnapshotBtn: document.getElementById("new-snapshot-btn"),
   clipBtn: document.getElementById("clip-btn"),
@@ -53,6 +55,8 @@ async function init() {
     return;
   }
   els.connectedView.hidden = false;
+  await flushPendingObservations();
+  await refreshPendingCount();
   await refreshStatus(apiBaseUrl, token);
   await refreshSnapshots(apiBaseUrl, token);
   await checkCurrentTab();
@@ -65,6 +69,7 @@ async function refreshStatus(apiBaseUrl, token) {
     const json = await res.json();
     els.clipsToday.textContent = json.clips_today ?? "—";
     els.unassignedClips.textContent = json.unassigned_clips ?? "—";
+    collectionPaused = Boolean(json.paused);
   } catch {
     els.clipsToday.textContent = "—";
     els.unassignedClips.textContent = "—";
@@ -92,7 +97,52 @@ async function refreshSnapshots(apiBaseUrl, token) {
   }
 }
 
+/**
+ * A clip the user already captured (real extracted page data) should
+ * never be lost to a network blip — that's the "offline queue/retry"
+ * requirement (spec section 30/31), scoped narrowly: this only retries
+ * DELIVERING a capture the user already made with a real click, it never
+ * captures anything new on its own. Nothing here touches a marketplace
+ * page — it only re-POSTs previously-extracted JSON to InkFrame's own API.
+ */
+async function queuePendingObservation(apiBaseUrl, token, payload) {
+  const { pendingObservations = [] } = await chrome.storage.local.get(["pendingObservations"]);
+  pendingObservations.push({ apiBaseUrl, token, payload, queuedAt: Date.now() });
+  await chrome.storage.local.set({ pendingObservations });
+}
+
+async function flushPendingObservations() {
+  const { pendingObservations = [] } = await chrome.storage.local.get(["pendingObservations"]);
+  if (pendingObservations.length === 0) return 0;
+  const stillPending = [];
+  for (const item of pendingObservations) {
+    try {
+      const res = await fetch(`${item.apiBaseUrl}/api/inkframescout/observations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${item.token}` },
+        body: JSON.stringify(item.payload),
+      });
+      if (!res.ok) stillPending.push(item); // a real rejection (e.g. paused) stays visible, not silently dropped
+    } catch {
+      stillPending.push(item); // still offline — keep it queued for next time
+    }
+  }
+  await chrome.storage.local.set({ pendingObservations: stillPending });
+  return stillPending.length;
+}
+
+async function refreshPendingCount() {
+  const { pendingObservations = [] } = await chrome.storage.local.get(["pendingObservations"]);
+  els.pendingCount.textContent = String(pendingObservations.length);
+}
+
 async function checkCurrentTab() {
+  if (collectionPaused) {
+    els.pageStatus.textContent = "Collection is paused — resume it from Settings → Extensions → InkframeScout.";
+    els.pageStatus.classList.remove("supported");
+    els.clipBtn.disabled = true;
+    return;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.url && isSupportedUrl(tab.url)) {
     els.pageStatus.textContent = "This page is supported — ready to clip.";
@@ -175,11 +225,27 @@ els.clipBtn.addEventListener("click", async () => {
     if (!extracted || extracted.error) throw new Error(extracted?.error || "Could not read this page.");
 
     const snapshotId = els.snapshotSelect.value || null;
-    const res = await fetch(`${apiBaseUrl}/api/inkframescout/observations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ...extracted, snapshot_id: snapshotId }),
-    });
+    const payload = { ...extracted, snapshot_id: snapshotId };
+
+    let res;
+    try {
+      res = await fetch(`${apiBaseUrl}/api/inkframescout/observations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // Network failure — the extraction itself already succeeded, so queue the real
+      // captured data for retry rather than losing it (spec: "never lose observations
+      // because of a temporary network failure").
+      await queuePendingObservation(apiBaseUrl, token, payload);
+      await refreshPendingCount();
+      els.clipResult.textContent = `Saved "${extracted.title}" locally — will sync automatically once you're back online.`;
+      els.clipResult.className = "result success";
+      els.clipResult.hidden = false;
+      return;
+    }
+
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Could not save this clip.");
 

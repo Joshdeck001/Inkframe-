@@ -156,6 +156,20 @@
      between clips of the same book on different marketplaces
      (`lib/scout-matching.ts`); see "InkframeScout v2" in the root
      `README.md`.
+   - `supabase/migrations/0024_inkframescout_intelligence.sql` — adds
+     `scout_clips.bsr`/`category_rank`/`published_date`/
+     `extension_version`/`adapter_version` (read the same way `isbn`
+     already is — genuinely visible page text, same single click);
+     `extension_connections.paused` (pause collection without revoking
+     the connection); `competition_sets` + `competition_set_clips` (named
+     groups of clips to compare); `watched_books` (a canonical-book
+     bookmark, updated only when the user re-clips it — never a
+     background poller); `scout_opportunities` (the Opportunity
+     Workspace, with a real versioned `score` computed by
+     `lib/scout-opportunity.ts`); and widens `research_notes` with
+     `opportunity_id`/`competition_set_id` so notes reuse the exact same
+     table every other research path already writes to. See
+     "InkframeScout Intelligence 2.0" in the root `README.md`.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

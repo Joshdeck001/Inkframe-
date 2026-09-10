@@ -19,19 +19,19 @@ export function hashConnectionCode(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
 
-export type ResolvedConnection = { connectionId: string; userId: string };
+export type ResolvedConnection = { connectionId: string; userId: string; paused: boolean };
 
 /** Resolves a bearer token to its owning user, or null if invalid/revoked. Never trusts a client-supplied user id. */
 export async function resolveConnection(supabase: SupabaseClient, rawToken: string): Promise<ResolvedConnection | null> {
   const tokenHash = hashConnectionCode(rawToken);
   const { data } = await supabase
     .from("extension_connections")
-    .select("id, user_id, status")
+    .select("id, user_id, status, paused")
     .eq("token_hash", tokenHash)
     .maybeSingle();
   if (!data || data.status !== "active") return null;
   await supabase.from("extension_connections").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-  return { connectionId: data.id, userId: data.user_id };
+  return { connectionId: data.id, userId: data.user_id, paused: data.paused ?? false };
 }
 
 export function extractBearerToken(request: Request): string | null {

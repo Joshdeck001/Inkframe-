@@ -25,11 +25,19 @@ export default function SettingsPage() {
   const [savingProvider, setSavingProvider] = useState(false);
 
   const [connections, setConnections] = useState<
-    { id: string; name: string; created_at: string; last_used_at: string | null; status: string }[] | null
+    { id: string; name: string; created_at: string; last_used_at: string | null; status: string; paused: boolean }[] | null
   >(null);
+  const [scoutDiagnostics, setScoutDiagnostics] = useState<{
+    unassigned_clips: number;
+    total_clips: number;
+    last_extension_version: string | null;
+    last_adapter_version: string | null;
+    last_sync_at: string | null;
+  } | null>(null);
   const [newCode, setNewCode] = useState<string | null>(null);
   const [generatingCode, setGeneratingCode] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [deletingScoutData, setDeletingScoutData] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,9 +141,54 @@ export default function SettingsPage() {
   async function loadConnections() {
     const { data } = await supabase
       .from("extension_connections")
-      .select("id, name, created_at, last_used_at, status")
+      .select("id, name, created_at, last_used_at, status, paused")
       .order("created_at", { ascending: false });
     setConnections(data ?? []);
+
+    // Real diagnostics only — last-known version info comes from the most recent
+    // clip this account actually produced, never a claim about what's installed now.
+    const [{ count: unassigned }, { count: total }, { data: lastClip }] = await Promise.all([
+      supabase.from("scout_clips").select("id", { count: "exact", head: true }).eq("status", "unassigned"),
+      supabase.from("scout_clips").select("id", { count: "exact", head: true }),
+      supabase.from("scout_clips").select("extension_version, adapter_version, clipped_at").order("clipped_at", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    setScoutDiagnostics({
+      unassigned_clips: unassigned ?? 0,
+      total_clips: total ?? 0,
+      last_extension_version: lastClip?.extension_version ?? null,
+      last_adapter_version: lastClip?.adapter_version ?? null,
+      last_sync_at: lastClip?.clipped_at ?? null,
+    });
+  }
+
+  async function handleTogglePause(id: string, paused: boolean) {
+    await supabase.from("extension_connections").update({ paused }).eq("id", id);
+    await loadConnections();
+  }
+
+  async function handleDeleteScoutData() {
+    if (
+      !confirm(
+        "Delete all InkframeScout data? This permanently removes every clip, snapshot, competition set, watchlist entry, and " +
+          "opportunity you've collected. Evidence you already assigned into a research session is NOT affected — this only " +
+          "deletes InkframeScout's own raw data. This can't be undone."
+      )
+    ) {
+      return;
+    }
+    setDeletingScoutData(true);
+    // RLS already scopes every one of these tables to the caller's own rows — .not("id", "is", null)
+    // just satisfies the client's requirement for an explicit filter, it isn't the real safety boundary.
+    await Promise.all([
+      supabase.from("scout_clips").delete().not("id", "is", null),
+      supabase.from("scout_snapshots").delete().not("id", "is", null),
+      supabase.from("competition_sets").delete().not("id", "is", null),
+      supabase.from("watched_books").delete().not("id", "is", null),
+      supabase.from("scout_opportunities").delete().not("id", "is", null),
+    ]);
+    setDeletingScoutData(false);
+    await loadConnections();
+    setMessage("InkframeScout data deleted.");
   }
 
   async function handleGenerateCode() {
@@ -305,7 +358,10 @@ export default function SettingsPage() {
           {connections?.map((c) => (
             <div className="field" key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
               <span style={{ fontSize: "13px" }}>
-                {c.name} — <span style={{ color: c.status === "active" ? "#5fe3b8" : "var(--muted)" }}>{c.status}</span>
+                {c.name} —{" "}
+                <span style={{ color: c.status !== "active" ? "var(--muted)" : c.paused ? "#ffc266" : "#5fe3b8" }}>
+                  {c.status === "active" ? (c.paused ? "PAUSED" : "CONNECTED") : "REVOKED"}
+                </span>
                 <br />
                 <span className="hint">
                   Created {new Date(c.created_at).toLocaleDateString()}
@@ -313,12 +369,33 @@ export default function SettingsPage() {
                 </span>
               </span>
               {c.status === "active" && (
-                <button className="btn btn-secondary" onClick={() => handleRevokeConnection(c.id)}>
-                  Revoke
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button className="btn btn-secondary" onClick={() => handleTogglePause(c.id, !c.paused)}>
+                    {c.paused ? "Resume" : "Pause"}
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => handleRevokeConnection(c.id)}>
+                    Revoke
+                  </button>
+                </div>
               )}
             </div>
           ))}
+
+          {scoutDiagnostics && connections && connections.length > 0 && (
+            <div style={{ marginTop: "14px", padding: "12px", background: "rgba(255,255,255,.03)", border: "1px solid var(--border, #1c2740)", borderRadius: "10px" }}>
+              <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "6px" }}>Diagnostics</div>
+              <p className="hint">Total clips: {scoutDiagnostics.total_clips} · Awaiting review: {scoutDiagnostics.unassigned_clips}</p>
+              <p className="hint">
+                Last sync: {scoutDiagnostics.last_sync_at ? new Date(scoutDiagnostics.last_sync_at).toLocaleString() : "Never"}
+              </p>
+              <p className="hint">
+                Last known extension version: {scoutDiagnostics.last_extension_version ?? "Unknown"} · adapter: {scoutDiagnostics.last_adapter_version ?? "Unknown"}
+              </p>
+              <button className="btn btn-secondary" style={{ marginTop: "10px" }} onClick={handleDeleteScoutData} disabled={deletingScoutData}>
+                {deletingScoutData ? "Deleting…" : "Delete All InkframeScout Data"}
+              </button>
+            </div>
+          )}
 
           <button className="btn btn-secondary" onClick={handleGenerateCode} disabled={generatingCode} style={{ marginTop: "6px" }}>
             {generatingCode ? "Generating…" : "Generate Connection Code"}

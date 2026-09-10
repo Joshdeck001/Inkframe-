@@ -24,7 +24,10 @@ export const POST = withJsonErrors(async (request: Request) => {
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
   const body = await request.json();
-  const { marketplace, source_url, title, author, external_id, isbn, price, currency, category, rating, review_count, raw_fields, snapshot_id } = body;
+  const {
+    marketplace, source_url, title, author, external_id, isbn, price, currency, category, rating, review_count,
+    bsr, category_rank, published_date, extension_version, adapter_version, raw_fields, snapshot_id,
+  } = body;
 
   if (!MARKETPLACES.includes(marketplace)) return NextResponse.json({ error: `marketplace must be one of: ${MARKETPLACES.join(", ")}` }, { status: 400 });
   if (typeof source_url !== "string" || !source_url) return NextResponse.json({ error: "source_url is required" }, { status: 400 });
@@ -32,6 +35,7 @@ export const POST = withJsonErrors(async (request: Request) => {
   const service = createServiceClient();
   const resolved = await resolveConnection(service, token);
   if (!resolved) return NextResponse.json({ error: "Connection is invalid or revoked." }, { status: 401 });
+  if (resolved.paused) return NextResponse.json({ error: "Collection is paused for this connection — resume it from Settings → Extensions → InkframeScout." }, { status: 403 });
 
   let snapshotId: string | null = null;
   if (typeof snapshot_id === "string" && snapshot_id) {
@@ -57,6 +61,11 @@ export const POST = withJsonErrors(async (request: Request) => {
       category: typeof category === "string" ? category.slice(0, 300) : null,
       rating: typeof rating === "number" ? rating : null,
       review_count: typeof review_count === "number" ? review_count : null,
+      bsr: typeof bsr === "number" ? bsr : null,
+      category_rank: typeof category_rank === "number" ? category_rank : null,
+      published_date: typeof published_date === "string" ? published_date.slice(0, 100) : null,
+      extension_version: typeof extension_version === "string" ? extension_version.slice(0, 30) : null,
+      adapter_version: typeof adapter_version === "string" ? adapter_version.slice(0, 30) : null,
       raw_fields: raw_fields && typeof raw_fields === "object" ? raw_fields : {},
       snapshot_id: snapshotId,
     })

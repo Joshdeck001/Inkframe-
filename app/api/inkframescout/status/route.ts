@@ -30,10 +30,28 @@ export const GET = withJsonErrors(async (request: Request) => {
     .eq("user_id", resolved.userId)
     .eq("status", "unassigned");
 
+  // "Last known" version info, honestly sourced from the most recent clip
+  // this connection actually produced — never a claim about what's
+  // currently installed, since the server has no way to know that
+  // without the extension telling it via a real clip.
+  const { data: lastClip } = await service
+    .from("scout_clips")
+    .select("extension_version, adapter_version, clipped_at, marketplace")
+    .eq("connection_id", resolved.connectionId)
+    .order("clipped_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return NextResponse.json({
     connected: true,
+    connection_state: resolved.paused ? "PAUSED" : "CONNECTED",
+    paused: resolved.paused,
     supported_marketplaces: SUPPORTED_MARKETPLACES,
     clips_today: clipsToday ?? 0,
     unassigned_clips: unassigned ?? 0,
+    last_extension_version: lastClip?.extension_version ?? null,
+    last_adapter_version: lastClip?.adapter_version ?? null,
+    last_adapter_marketplace: lastClip?.marketplace ?? null,
+    last_sync_at: lastClip?.clipped_at ?? null,
   });
 });

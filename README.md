@@ -1891,6 +1891,144 @@ weighting or the missing inputs). Adapter health/versioning dashboards
 were also skipped — they exist in the spec to monitor a fleet of
 continuously-running scrapers, which InkframeScout deliberately isn't.
 
+## InkframeScout Intelligence 2.0 — Competition Sets, Opportunity Workspace, still one click at a time
+
+A third, much larger spec ("Intelligence 2.0 Expansion," 45 sections)
+re-asked for the same automatic/continuous mechanism again — an overlay
+panel appearing "around each book result" on search/category/bestseller
+pages, a background sync loop that "may collect... while the user
+browses" — on top of a genuinely large amount of new analysis and
+workspace functionality (Opportunity Radar, Market Map, Competition Sets,
+Watchlists, an Opportunity Workspace with a real approval-to-project
+status machine, and more). Consistent with the two rounds before it, the
+automated/background piece was declined again for the same reason
+(Amazon's Conditions of Use prohibit the *act* of automated extraction,
+not just credential bypass); everything else was built for real, on top
+of the same one-click capture model, reusing existing infrastructure
+wherever it already existed rather than duplicating it.
+
+**Audit first, per the spec's own instruction.** Before writing code:
+Research's evidence tables, `research_sessions`, `research_notes`,
+`lib/research-frequency.ts`'s clustering, `lib/ai-client.ts`'s provider
+fallback chain, and `/api/research/create-project` all already existed
+and were extended, not rebuilt. No "watchlist," "competition set,"
+"canonical book," or "opportunity" model existed anywhere in the repo —
+those are genuinely new (migration `0024`).
+
+**What was built:**
+
+- **BSR, category rank, and publication date** — `extract.js` now reads
+  these the same way `isbn` already does: a label-based scan of the
+  already-rendered page's own text at the moment of the click (Amazon's
+  own "Best Sellers Rank #X in Books ... #Y in Category" line, and a
+  "Publication date"/"Published:" label present on all three
+  marketplaces). Still zero new automation — one more field read during
+  the same single click. Amazon-only for BSR; Kobo and Google Play Books
+  correctly return `null` rather than inventing an equivalent ranking
+  neither one publishes.
+- **Competition Sets** (`competition_sets`) — name a group of clipped
+  books, compare them side by side (`ComparisonTable`, real fields only:
+  BSR, price, rating, reviews, category, publication date), and run the
+  **Opportunity Radar** against the set.
+- **Opportunity Radar** (`lib/scout-opportunity.ts`) — built with the
+  exact same discipline as the Research round's
+  `lib/research-opportunity.ts`: every dimension is a capped function of
+  a real count already sitting in `scout_clips` (competition density,
+  cross-platform reach, price spread, momentum from real re-observed BSR
+  trends, positioning variety from real title-keyword clusters), each
+  with a `basis` string citing exactly what produced it — the spec's own
+  "no mysterious black-box score" requirement. **"Demand" and
+  "Discoverability" were deliberately NOT included** — InkFrame has no
+  real search-volume or impression data to back either one, and a
+  plausible-looking number for them would be exactly the fabrication the
+  standing rule forbids. Scores are stored with a `calculation_version`
+  (currently `1`) so a future formula change never silently reinterprets
+  a historical score.
+- **Watchlist** (`watched_books`) — a canonical-book bookmark, not a
+  poller: the panel is explicit that "updates only arrive when you clip
+  a watched book again," and shows real trend direction (BSR/price
+  up/down/stable) only when at least two real observations exist.
+- **Market Scanner** (`scanMarket()` in `lib/scout-opportunity.ts`) —
+  reuses `lib/research-frequency.ts`'s existing word-frequency/clustering
+  functions (audit-first reuse, not a second implementation) against a
+  chosen Snapshot or Competition Set's already-clipped books — never a
+  live scan of a marketplace page. "Books analyzed" is always the real
+  count passed in.
+- **"What would you build instead?"** (`lib/scout-differentiation.ts`,
+  `/api/inkframescout/differentiate`) — an AI call (reusing the same
+  `generateStructured`/provider-fallback chain as Cover concepts and
+  Writing) that takes real observed fields from one or more clips and
+  proposes original market directions. The system prompt is explicit:
+  never reuse the source book's title, subtitle, description wording, or
+  cover concept — this is brainstorming, not a cloning tool, and its
+  output is always labeled RECOMMENDED in the UI.
+- **Opportunity Workspace** (`scout_opportunities`) — status machine
+  (new → reviewing → researching → approved → rejected →
+  converted_to_project). "Start Research" creates a real
+  `research_sessions` row and assigns the set's clips into
+  `competitor_research` as evidence (the same `assign()` logic My Clips
+  already used, not a new pathway); `/api/research/create-project` — the
+  existing, unmodified opportunity-to-project bridge from the Research
+  round — now also flips a linked opportunity to `converted_to_project`
+  when its session becomes a real project. **Only that explicit action
+  ever creates a project** — approving an opportunity, by itself, does
+  nothing but change its status.
+- **Notes everywhere that matters** — `research_notes` widened with
+  `opportunity_id`/`competition_set_id` (same table, same
+  `source_type: 'user_provided'` discipline as every other note in the
+  app), not a second notes system.
+- **Pause, diagnostics, and data deletion** (Settings → Extensions →
+  InkframeScout) — pausing a connection (`extension_connections.paused`)
+  rejects new observations server-side without revoking the credential;
+  diagnostics show real last-known extension/adapter version and last
+  sync time (sourced from the most recent clip that connection actually
+  produced, never a claim about what's currently installed); "Delete All
+  InkframeScout Data" is a real, confirmed, RLS-scoped delete across
+  every Scout table, explicit that assigned research evidence is
+  unaffected.
+- **Offline retry queue** — narrowly scoped: if delivering an
+  already-captured clip to InkFrame's own API fails (network error), the
+  popup queues the real extracted JSON in `chrome.storage.local` and
+  retries on next open. This never touches a marketplace page or
+  retries the *extraction* — only the delivery of a capture the user
+  already explicitly made.
+
+**Declined again, same reasoning as the last two rounds:** the
+"Automatic Detection" toggle, an overlay injected onto every book result
+on a search/category/bestseller page, "Scan This Page" for multiple
+books in one action, and any background sync that runs without a fresh
+user click. Also declined: the Sales Estimation formula (spec section
+26) — there's no legitimate, calibrated methodology available in this
+environment to back a "daily/monthly estimated sales" number, and
+fabricating one dressed up as a real model is exactly what the standing
+rule forbids, regardless of how clearly it's labeled "ESTIMATED."
+
+**Verification:** `tsc --noEmit`, `eslint` (repo-wide, zero new errors),
+a full production build (every new route compiles, including
+`/api/inkframescout/{differentiate,pause}` and the widened
+`observations`/`status`/`create-project` routes), and real runtime
+tests — `lib/scout-opportunity.ts`'s Opportunity Radar and Market
+Scanner (confirmed no "Demand"/"Discoverability" dimension exists, a
+real momentum calculation from a genuine BSR series, insufficient-data
+handling for an empty set), `lib/scout-matching.ts`'s generalized
+observation-series/direction logic, and `extract.js`'s real BSR/
+published-date extraction run against a fake DOM via Node's `vm` module
+— which caught and fixed two real bugs before they shipped: the
+published-date regex didn't match the bare "Published:" label (only
+"Publication date:"), and a first fix for that introduced a false
+positive matching "Publisher:"/"Publishing" as if they were dates,
+fixed with a proper word-boundary check.
+
+**Known gap, stated honestly:** the spec's own end-to-end test (install
+the extension, browse a live Amazon/Google Play Books/Kobo page, clip,
+verify sync, build a Competition Set, approve an opportunity, create a
+project) requires a real browser session against live marketplace pages
+and a live Supabase project — neither is available in this sandboxed
+environment. Every piece was verified at the unit/integration level
+(fake DOM, fake Supabase, real build) instead; a live walkthrough with a
+real account and a loaded extension is still needed before calling this
+done end-to-end.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

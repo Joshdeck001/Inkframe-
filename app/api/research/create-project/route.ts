@@ -61,6 +61,10 @@ export const POST = withJsonErrors(async (request: Request) => {
     supabase.from("category_research").update({ project_id: project.id }).eq("session_id", session_id).is("project_id", null),
     supabase.from("research_notes").update({ project_id: project.id }).eq("session_id", session_id).is("project_id", null),
     supabase.from("research_reports").update({ project_id: project.id }).eq("session_id", session_id).is("project_id", null),
+    // If this session was started from an InkframeScout Opportunity, close the loop: the
+    // Opportunity Workspace status machine only ever reaches 'converted_to_project' here,
+    // driven by this same real project-creation action — never automatically.
+    supabase.from("scout_opportunities").update({ status: "converted_to_project", project_id: project.id }).eq("session_id", session_id),
   ]);
 
   return NextResponse.json({ project_id: project.id });

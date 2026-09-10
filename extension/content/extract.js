@@ -14,6 +14,17 @@
  * guessing from an unrelated element.
  */
 (function extractInkframeScoutClip() {
+  // Bumped when extraction logic changes for a marketplace, so a stored
+  // observation always carries the exact adapter version that produced
+  // it (spec: "Versioning" / "Historical records should retain the
+  // version used to produce them").
+  const EXTENSION_VERSION = "2.1.0";
+  const ADAPTER_VERSIONS = {
+    amazon: "amazon-1.1.0",
+    google_play_books: "google_play_books-1.1.0",
+    kobo: "kobo-1.1.0",
+  };
+
   function text(selectors) {
     for (const sel of selectors) {
       const el = document.querySelector(sel);
@@ -46,6 +57,45 @@
     return match[1].replace(/[\s-]/g, "");
   }
 
+  /**
+   * Same generic label-scan approach as ISBN — "Publication date" (or
+   * "Published"/"Publish Date") followed by whatever text follows it, up
+   * to the next line break. Kept as raw text rather than force-parsed
+   * into a strict date, since marketplaces format this inconsistently
+   * and guessing a parse would risk a fabricated precision the page
+   * never actually stated.
+   */
+  function extractPublishedDate() {
+    const bodyText = document.body.innerText || "";
+    // Matches "Publication date:", "Publish Date:", and the bare "Published:" form
+    // (which has no literal "date" token at all) — the (?![a-zA-Z]) guard requires
+    // "Publish"/"Published"/"Publication" to end a word right there, so this can't
+    // misfire on "Publisher:" or "Publishing House", which share the same prefix.
+    const match = bodyText.match(/Publi(?:cation|sh(?:ed)?)(?![a-zA-Z])\s*(?:[Dd]ate)?\s*[:\-]?\s*([^\n]{4,40})/);
+    return match ? match[1].trim() : null;
+  }
+
+  /**
+   * Amazon's own "Best Sellers Rank" line, e.g. "#12,483 in Books (See
+   * Top 100) ... #7 in Photography Textbooks". Only implemented for
+   * Amazon — Kobo and Google Play Books don't publish an equivalent
+   * public ranking, so their extractors correctly return null for both
+   * fields rather than inventing one. If the label isn't present (e.g.
+   * unranked or region variance), both fields are null, never guessed.
+   */
+  function extractAmazonRank() {
+    const bodyText = document.body.innerText || "";
+    const idx = bodyText.search(/Best Sellers Rank/i);
+    if (idx === -1) return { bsr: null, category_rank: null, category_rank_label: null };
+    const snippet = bodyText.slice(idx, idx + 400);
+    const matches = [...snippet.matchAll(/#([\d,]+)\s+in\s+([A-Za-z][A-Za-z &'/-]{2,60})/g)];
+    if (matches.length === 0) return { bsr: null, category_rank: null, category_rank_label: null };
+    const bsr = Number(matches[0][1].replace(/,/g, "")) || null;
+    if (matches.length < 2) return { bsr, category_rank: null, category_rank_label: null };
+    const categoryRank = Number(matches[1][1].replace(/,/g, "")) || null;
+    return { bsr, category_rank: categoryRank, category_rank_label: matches[1][2].trim() };
+  }
+
   function extractAmazon() {
     const asinMatch = window.location.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
     const priceText = text([
@@ -56,6 +106,7 @@
     ]);
     const price = priceText ? Number(priceText.replace(/[^0-9.]/g, "")) || null : null;
     const category = text(["#wayfinding-breadcrumbs_feature_div", ".a-breadcrumb"]);
+    const rank = extractAmazonRank();
 
     return {
       marketplace: "amazon",
@@ -68,9 +119,13 @@
       rating: num([".a-icon-alt", "#acrPopover .a-icon-alt"]),
       review_count: num(["#acrCustomerReviewText"]),
       isbn: extractIsbn(),
+      published_date: extractPublishedDate(),
+      bsr: rank.bsr,
+      category_rank: rank.category_rank,
       raw_fields: {
         breadcrumbs: category,
         format: text(["#formats .a-button-selected .a-button-text", "#tmm-grid-swatch-DEFAULT .slot-title"]),
+        category_rank_label: rank.category_rank_label,
       },
     };
   }
@@ -90,6 +145,9 @@
       rating: num(["div[aria-label*='star']", ".rating"]),
       review_count: num([".review-count"]),
       isbn: extractIsbn(),
+      published_date: extractPublishedDate(),
+      bsr: null,
+      category_rank: null,
       raw_fields: {},
     };
   }
@@ -108,6 +166,9 @@
       rating: num([".rating-star-container", "[itemprop='ratingValue']"]),
       review_count: num([".reviews-count"]),
       isbn: extractIsbn(),
+      published_date: extractPublishedDate(),
+      bsr: null,
+      category_rank: null,
       raw_fields: {},
     };
   }
@@ -123,5 +184,10 @@
     return { error: "Could not identify a book on this page. Make sure you're on a single book's product page, not a search or category page." };
   }
 
-  return { ...result, source_url: window.location.href };
+  return {
+    ...result,
+    source_url: window.location.href,
+    extension_version: EXTENSION_VERSION,
+    adapter_version: ADAPTER_VERSIONS[result.marketplace],
+  };
 })();

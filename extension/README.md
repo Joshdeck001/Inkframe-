@@ -42,6 +42,25 @@ cross-platform book matching, and observed price history built only from
 the user's own repeated clips over time — see "InkframeScout v2" in the
 root `README.md`.
 
+A third spec ("Intelligence 2.0") asked for the same automatic overlay
+mechanism a third time — declined again, same reasoning — plus a large
+set of genuinely new analysis and workspace features that *were* built:
+BSR/category rank/publication date extraction (same click, same
+read-only rule as every other field), Competition Sets, a Watchlist,
+Market Scanner, and an Opportunity Workspace. See "InkframeScout
+Intelligence 2.0" in the root `README.md` for the full list of what was
+built versus declined, and why.
+
+Two small additions to the popup itself, both still scoped to the single
+user-click model: **Pause**, settable from Settings, makes the server
+reject new observations from this connection without revoking it (the
+popup shows "Collection is paused" and disables clipping); and an
+**offline retry queue** — if delivering an already-captured clip to
+InkFrame's API fails (a network error), the extracted JSON is queued in
+`chrome.storage.local` and retried the next time the popup opens. Neither
+touches a marketplace page; both only govern whether/when a capture the
+user already explicitly made gets delivered.
+
 ## Architecture
 
 ```

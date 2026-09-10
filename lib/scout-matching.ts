@@ -1,9 +1,9 @@
 /**
- * Cross-platform book matching and observed price history, computed only
- * from clips the user has already captured with InkframeScout's one-click
- * capture (see extension/README.md) — never from a live lookup against
- * any marketplace. Everything here is a real join/group over rows already
- * in scout_clips; nothing is estimated, predicted, or scored.
+ * Cross-platform book matching and observed historical trends, computed
+ * only from clips the user has already captured with InkframeScout's
+ * one-click capture (see extension/README.md) — never from a live lookup
+ * against any marketplace. Everything here is a real join/group over rows
+ * already in scout_clips; nothing is estimated, predicted, or scored.
  */
 
 export type MatchableClip = {
@@ -14,6 +14,9 @@ export type MatchableClip = {
   external_id: string | null;
   isbn: string | null;
   price: number | null;
+  bsr: number | null;
+  rating: number | null;
+  review_count: number | null;
   clipped_at: string;
 };
 
@@ -82,33 +85,47 @@ export function groupClipsByCanonicalBook(clips: MatchableClip[]): CanonicalGrou
   return groups;
 }
 
-export type PriceObservation = { price: number; clipped_at: string; marketplace: string };
-export type PriceHistoryGroup = { key: string; marketplace: string; observations: PriceObservation[] };
+export type SeriesField = "price" | "bsr" | "rating" | "review_count";
+export type SeriesObservation = { value: number; clipped_at: string };
+export type ObservedSeries = {
+  key: string;
+  marketplace: string;
+  field: SeriesField;
+  observations: SeriesObservation[];
+  // A purely numeric direction — "up"/"down" says nothing about whether
+  // that's good or bad (a rising review count is good, a rising BSR is
+  // not), so callers interpret direction per field rather than this
+  // module making that judgment call for them.
+  direction: "up" | "down" | "flat";
+};
 
 /**
- * Real, timestamped price points from the user's own repeated clips of
- * the same listing (same marketplace + external_id, clipped more than
- * once over time) — an actual observation log, not an estimate or a
- * vendor feed. Groups with only one observation are dropped; there's no
- * "history" in a single point.
+ * Real, timestamped observations of one field from the user's own
+ * repeated clips of the same listing (same marketplace + external_id,
+ * clipped more than once over time) — an actual observation log, not an
+ * estimate or a vendor feed. Groups with fewer than two observations are
+ * dropped; there's no "history" or "trend" in a single point.
  */
-export function buildObservedPriceHistory(clips: MatchableClip[]): PriceHistoryGroup[] {
+export function buildObservedSeries(clips: MatchableClip[], field: SeriesField): ObservedSeries[] {
   const groups = new Map<string, MatchableClip[]>();
   for (const clip of clips) {
-    if (clip.price == null || !clip.external_id) continue;
+    if (clip[field] == null || !clip.external_id) continue;
     const key = `${clip.marketplace}::${clip.external_id}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(clip);
   }
 
-  const result: PriceHistoryGroup[] = [];
+  const result: ObservedSeries[] = [];
   for (const [key, groupClips] of groups) {
     if (groupClips.length < 2) continue;
     const observations = groupClips
       .slice()
       .sort((a, b) => new Date(a.clipped_at).getTime() - new Date(b.clipped_at).getTime())
-      .map((c) => ({ price: c.price as number, clipped_at: c.clipped_at, marketplace: c.marketplace }));
-    result.push({ key, marketplace: groupClips[0].marketplace, observations });
+      .map((c) => ({ value: c[field] as number, clipped_at: c.clipped_at }));
+    const first = observations[0].value;
+    const last = observations[observations.length - 1].value;
+    const direction = last === first ? "flat" : last > first ? "up" : "down";
+    result.push({ key, marketplace: groupClips[0].marketplace, field, observations, direction });
   }
   return result;
 }

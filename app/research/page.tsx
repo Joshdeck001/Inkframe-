@@ -8,7 +8,8 @@ import { useMyProjects } from "@/lib/useMyProjects";
 import ProjectPicker from "@/lib/ProjectPicker";
 import type { ResearchReport } from "@/lib/research-report";
 import { classifyEvidence } from "@/lib/research-evidence-labels";
-import { groupClipsByCanonicalBook, buildObservedPriceHistory } from "@/lib/scout-matching";
+import { groupClipsByCanonicalBook, buildObservedSeries } from "@/lib/scout-matching";
+import { computeOpportunityRadar, scanMarket, type OpportunityRadar, type MarketScanResult } from "@/lib/scout-opportunity";
 
 export const dynamic = "force-dynamic";
 
@@ -830,38 +831,73 @@ type ScoutClip = {
   external_id: string | null;
   isbn: string | null;
   price: number | null;
+  bsr: number | null;
   category: string | null;
+  category_rank: number | null;
+  rating: number | null;
+  review_count: number | null;
+  published_date: string | null;
   clipped_at: string;
   status: string;
   snapshot_id: string | null;
 };
 
 type ScoutSnapshot = { id: string; label: string };
+type CompetitionSet = { id: string; label: string };
+type CompetitionSetClipRow = { competition_set_id: string; clip_id: string };
+type WatchedBook = { id: string; isbn: string | null; marketplace: string | null; external_id: string | null; title: string | null; author: string | null };
+type ScoutOpportunity = {
+  id: string;
+  title: string;
+  market: string | null;
+  competition_set_id: string | null;
+  session_id: string | null;
+  project_id: string | null;
+  score: OpportunityRadar | null;
+  potential_audience: string | null;
+  potential_positioning: string | null;
+  potential_differentiation: string | null;
+  risks: string | null;
+  status: string;
+};
+
+function platformLabel(marketplace: string): string {
+  return PLATFORM_LABELS[marketplace === "google_play_books" ? "google_play" : marketplace] ?? marketplace;
+}
 
 function CrossPlatformInsights({ clips }: { clips: ScoutClip[] }) {
   const matches = groupClipsByCanonicalBook(clips);
-  const priceHistory = buildObservedPriceHistory(clips);
-  if (matches.length === 0 && priceHistory.length === 0) return null;
+  const priceHistory = buildObservedSeries(clips, "price");
+  const bsrHistory = buildObservedSeries(clips, "bsr");
+  if (matches.length === 0 && priceHistory.length === 0 && bsrHistory.length === 0) return null;
 
   return (
     <div className="checklist-panel" style={{ marginBottom: "14px" }}>
-      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Cross-Platform & Price Insights</div>
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Cross-Platform & Historical Insights</div>
       <p className="hint" style={{ marginBottom: "10px" }}>
-        Computed only from clips you&apos;ve already captured — no live lookups, no estimates.
+        CALCULATED — computed only from clips you&apos;ve already captured, no live lookups, no estimates.
       </p>
       {matches.map((g) => (
         <div key={g.key} className="check-row" style={{ alignItems: "flex-start" }}>
           <span>
             {g.confidence === "high" ? "Same book (ISBN match): " : "Possible same book (title/author match, unconfirmed): "}
-            {g.clips.map((c) => `${PLATFORM_LABELS[c.marketplace === "google_play_books" ? "google_play" : c.marketplace] ?? c.marketplace}${c.price != null ? ` $${c.price}` : ""}`).join(" · ")}
+            {g.clips.map((c) => `${platformLabel(c.marketplace)}${c.price != null ? ` $${c.price}` : ""}`).join(" · ")}
           </span>
         </div>
       ))}
       {priceHistory.map((h) => (
-        <div key={h.key} className="check-row" style={{ alignItems: "flex-start" }}>
+        <div key={`price-${h.key}`} className="check-row" style={{ alignItems: "flex-start" }}>
           <span>
-            Observed price history ({PLATFORM_LABELS[h.marketplace === "google_play_books" ? "google_play" : h.marketplace] ?? h.marketplace}):{" "}
-            {h.observations.map((o) => `$${o.price} on ${new Date(o.clipped_at).toLocaleDateString()}`).join(" → ")}
+            Observed price history ({platformLabel(h.marketplace)}):{" "}
+            {h.observations.map((o) => `$${o.value} on ${new Date(o.clipped_at).toLocaleDateString()}`).join(" → ")}
+          </span>
+        </div>
+      ))}
+      {bsrHistory.map((h) => (
+        <div key={`bsr-${h.key}`} className="check-row" style={{ alignItems: "flex-start" }}>
+          <span>
+            Observed BSR history ({platformLabel(h.marketplace)}, {h.direction === "down" ? "improving" : h.direction === "up" ? "declining" : "stable"}):{" "}
+            {h.observations.map((o) => `#${o.value.toLocaleString()} on ${new Date(o.clipped_at).toLocaleDateString()}`).join(" → ")}
           </span>
         </div>
       ))}
@@ -869,35 +905,134 @@ function CrossPlatformInsights({ clips }: { clips: ScoutClip[] }) {
   );
 }
 
-function MyClipsPanel() {
+type NoteRow = { id: string; content: string };
+
+/** Reuses research_notes exactly as every other research path already does — see 0024's widened owner check. */
+function NotesList({ scopeColumn, scopeId }: { scopeColumn: "opportunity_id" | "competition_set_id"; scopeId: string }) {
   const supabase = createClient();
-  const [clips, setClips] = useState<ScoutClip[] | null>(null);
-  const [sessions, setSessions] = useState<{ id: string; topic: string }[]>([]);
-  const [snapshots, setSnapshots] = useState<ScoutSnapshot[]>([]);
-  const [assigning, setAssigning] = useState<string | null>(null);
+  const [notes, setNotes] = useState<NoteRow[]>([]);
+  const [newNote, setNewNote] = useState("");
 
   async function load() {
-    const [{ data: c }, { data: s }, { data: snaps }] = await Promise.all([
-      supabase
-        .from("scout_clips")
-        .select("id, marketplace, title, author, source_url, external_id, isbn, price, category, clipped_at, status, snapshot_id")
-        .neq("status", "discarded")
-        .order("clipped_at", { ascending: false })
-        .limit(200),
-      supabase.from("research_sessions").select("id, topic").order("created_at", { ascending: false }).limit(30),
-      supabase.from("scout_snapshots").select("id, label").order("created_at", { ascending: false }).limit(50),
-    ]);
-    setClips((c as ScoutClip[]) ?? []);
-    setSessions(s ?? []);
-    setSnapshots((snaps as ScoutSnapshot[]) ?? []);
+    const { data } = await supabase.from("research_notes").select("id, content").eq(scopeColumn, scopeId).order("created_at", { ascending: false });
+    setNotes((data as NoteRow[]) ?? []);
   }
-
   useEffect(() => {
     (async () => {
       await load();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scopeId]);
+
+  async function addNote() {
+    if (!newNote.trim()) return;
+    await supabase.from("research_notes").insert({ [scopeColumn]: scopeId, research_type: "user_note", content: newNote.trim(), source_type: "user_provided" });
+    setNewNote("");
+    await load();
+  }
+  async function removeNote(id: string) {
+    await supabase.from("research_notes").delete().eq("id", id);
+    await load();
+  }
+
+  return (
+    <div style={{ marginTop: "10px" }}>
+      {notes.map((n) => (
+        <div className="check-row" key={n.id}>
+          <span style={{ fontSize: "12px" }}>{n.content}</span>
+          <button className="btn btn-secondary" style={{ padding: "2px 8px" }} onClick={() => removeNote(n.id)}>✕</button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+        <input placeholder="Add a note…" value={newNote} onChange={(e) => setNewNote(e.target.value)} style={{ flex: 1, fontSize: "12px" }} />
+        <button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={addNote}>+ Add</button>
+      </div>
+    </div>
+  );
+}
+
+function ComparisonTable({ clips }: { clips: ScoutClip[] }) {
+  if (clips.length === 0) return null;
+  const rows: [string, (c: ScoutClip) => string][] = [
+    ["Marketplace", (c) => platformLabel(c.marketplace)],
+    ["BSR", (c) => (c.bsr != null ? `#${c.bsr.toLocaleString()}` : "—")],
+    ["Category rank", (c) => (c.category_rank != null ? `#${c.category_rank.toLocaleString()}` : "—")],
+    ["Price", (c) => (c.price != null ? `$${c.price}` : "—")],
+    ["Published", (c) => c.published_date ?? "—"],
+    ["Rating", (c) => (c.rating != null ? String(c.rating) : "—")],
+    ["Reviews", (c) => (c.review_count != null ? c.review_count.toLocaleString() : "—")],
+    ["Category", (c) => c.category ?? "—"],
+    ["Clipped", (c) => new Date(c.clipped_at).toLocaleDateString()],
+  ];
+  return (
+    <div style={{ overflowX: "auto", marginTop: "10px" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: "4px 8px" }}></th>
+            {clips.map((c) => (
+              <th key={c.id} style={{ textAlign: "left", padding: "4px 8px" }}>{c.title || c.source_url}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, fn]) => (
+            <tr key={label}>
+              <td className="hint" style={{ padding: "4px 8px", fontWeight: 700 }}>{label}</td>
+              {clips.map((c) => (
+                <td key={c.id} style={{ padding: "4px 8px" }}>{fn(c)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint" style={{ marginTop: "6px" }}>OBSERVED for marketplace fields, CALCULATED for anything derived — all sourced from your own clips.</p>
+    </div>
+  );
+}
+
+function OpportunityRadarDisplay({ radar }: { radar: OpportunityRadar }) {
+  const [showWhy, setShowWhy] = useState(false);
+  return (
+    <div className="checklist-panel" style={{ marginTop: "10px" }}>
+      <div style={{ fontWeight: 700 }}>Opportunity Score: {radar.overall != null ? `${radar.overall}/100` : "Not enough data yet"}</div>
+      <div className="hint">Confidence: {radar.confidence.replace(/_/g, " ")} · Calculation v{radar.calculationVersion}</div>
+      <button className="btn btn-secondary" style={{ marginTop: "8px" }} onClick={() => setShowWhy((v) => !v)}>{showWhy ? "Hide" : "Why this score?"}</button>
+      {showWhy && (
+        <div style={{ marginTop: "8px" }}>
+          {radar.dimensions.map((d) => (
+            <div key={d.label} className="check-row" style={{ alignItems: "flex-start" }}>
+              <span style={{ fontSize: "12px" }}>
+                <strong>{d.label}</strong>: {d.score != null ? `${d.score}/100` : "insufficient data"} ({d.confidence}) — {d.basis}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="hint" style={{ marginTop: "8px" }}>{radar.disclaimer}</p>
+    </div>
+  );
+}
+
+function MyClipsPanel({
+  clips,
+  sessions,
+  snapshots,
+  competitionSets,
+  watched,
+  userId,
+  onChanged,
+}: {
+  clips: ScoutClip[];
+  sessions: { id: string; topic: string }[];
+  snapshots: ScoutSnapshot[];
+  competitionSets: CompetitionSet[];
+  watched: WatchedBook[];
+  userId: string | null;
+  onChanged: () => void;
+}) {
+  const supabase = createClient();
+  const [assigning, setAssigning] = useState<string | null>(null);
 
   async function assign(clip: ScoutClip, sessionId: string) {
     setAssigning(clip.id);
@@ -914,15 +1049,37 @@ function MyClipsPanel() {
     });
     await supabase.from("scout_clips").update({ status: "assigned", assigned_session_id: sessionId }).eq("id", clip.id);
     setAssigning(null);
-    await load();
+    onChanged();
   }
 
   async function discard(clipId: string) {
     await supabase.from("scout_clips").update({ status: "discarded" }).eq("id", clipId);
-    await load();
+    onChanged();
   }
 
-  if (clips === null || clips.length === 0) return null;
+  async function addToSet(clipId: string, setId: string) {
+    await supabase.from("competition_set_clips").insert({ competition_set_id: setId, clip_id: clipId });
+    onChanged();
+  }
+
+  function watchKeyFor(clip: ScoutClip): { isbn: string; marketplace?: undefined; external_id?: undefined } | { isbn?: undefined; marketplace: string; external_id: string } | null {
+    if (clip.isbn) return { isbn: clip.isbn };
+    if (clip.external_id) return { marketplace: clip.marketplace, external_id: clip.external_id };
+    return null;
+  }
+  function findWatch(clip: ScoutClip): WatchedBook | undefined {
+    const key = watchKeyFor(clip);
+    if (!key) return undefined;
+    return watched.find((w) => (key.isbn ? w.isbn === key.isbn : w.marketplace === key.marketplace && w.external_id === key.external_id));
+  }
+  async function toggleWatch(clip: ScoutClip) {
+    const key = watchKeyFor(clip);
+    if (!key || !userId) return;
+    const existing = findWatch(clip);
+    if (existing) await supabase.from("watched_books").delete().eq("id", existing.id);
+    else await supabase.from("watched_books").insert({ user_id: userId, title: clip.title, author: clip.author, ...key });
+    onChanged();
+  }
 
   const unassigned = clips.filter((c) => c.status === "unassigned");
   const snapshotLabel = (id: string | null) => (id ? snapshots.find((s) => s.id === id)?.label ?? "Untitled snapshot" : null);
@@ -938,9 +1095,13 @@ function MyClipsPanel() {
       <div style={{ fontWeight: 700, marginBottom: "4px" }}>My Clips ({unassigned.length})</div>
       <p className="hint" style={{ marginBottom: "12px" }}>
         Captured with InkframeScout, one deliberate click at a time — file each into a research session as real
-        competitor evidence, or discard it.
+        competitor evidence, save it to a Competition Set, watch it, or discard it.
       </p>
-      <CrossPlatformInsights clips={clips} />
+      {clips.length === 0 ? (
+        <p className="hint">No clips yet. Browse a supported marketplace page with InkframeScout and click &quot;Clip This Book&quot; to begin building market history.</p>
+      ) : (
+        <CrossPlatformInsights clips={clips} />
+      )}
       {Array.from(grouped.entries()).map(([key, groupClips]) => (
         <div key={key} style={{ marginBottom: "14px" }}>
           {key !== "__none__" && <div className="hint" style={{ fontWeight: 700, marginBottom: "6px" }}>📸 {snapshotLabel(key)}</div>}
@@ -948,9 +1109,10 @@ function MyClipsPanel() {
             <div key={clip.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
               <div style={{ fontWeight: 600, fontSize: "13px" }}>{clip.title || clip.source_url}</div>
               <div className="hint" style={{ fontSize: "12px", marginBottom: "8px" }}>
-                {PLATFORM_LABELS[clip.marketplace === "google_play_books" ? "google_play" : clip.marketplace] ?? clip.marketplace}
+                {platformLabel(clip.marketplace)}
                 {clip.author ? ` · ${clip.author}` : ""}
-                {clip.price != null ? ` · $${clip.price}` : ""} · {new Date(clip.clipped_at).toLocaleString()}
+                {clip.price != null ? ` · $${clip.price}` : ""}
+                {clip.bsr != null ? ` · BSR #${clip.bsr.toLocaleString()}` : ""} · {new Date(clip.clipped_at).toLocaleString()}
               </div>
               <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                 <select onChange={(e) => e.target.value && assign(clip, e.target.value)} disabled={assigning === clip.id} defaultValue="">
@@ -959,6 +1121,17 @@ function MyClipsPanel() {
                     <option key={s.id} value={s.id}>{s.topic || "Open discovery"}</option>
                   ))}
                 </select>
+                {competitionSets.length > 0 && (
+                  <select onChange={(e) => e.target.value && addToSet(clip.id, e.target.value)} defaultValue="">
+                    <option value="" disabled>+ Add to set…</option>
+                    {competitionSets.map((s) => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                )}
+                <button className="btn btn-secondary" onClick={() => toggleWatch(clip)} disabled={!watchKeyFor(clip)}>
+                  {findWatch(clip) ? "★ Watching" : "☆ Watch"}
+                </button>
                 <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
               </div>
             </div>
@@ -966,6 +1139,485 @@ function MyClipsPanel() {
         </div>
       ))}
     </div>
+  );
+}
+
+function CompetitionSetsPanel({
+  sets,
+  memberships,
+  clips,
+  userId,
+  onChanged,
+}: {
+  sets: CompetitionSet[];
+  memberships: CompetitionSetClipRow[];
+  clips: ScoutClip[];
+  userId: string | null;
+  onChanged: () => void;
+}) {
+  const supabase = createClient();
+  const [newLabel, setNewLabel] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [comparing, setComparing] = useState<Set<string>>(new Set());
+  const [radar, setRadar] = useState<Record<string, OpportunityRadar>>({});
+  const [showRadarFor, setShowRadarFor] = useState<string | null>(null);
+  const [creatingOpportunity, setCreatingOpportunity] = useState<string | null>(null);
+
+  async function createSet() {
+    if (!newLabel.trim() || !userId) return;
+    await supabase.from("competition_sets").insert({ user_id: userId, label: newLabel.trim() });
+    setNewLabel("");
+    onChanged();
+  }
+  async function deleteSet(id: string) {
+    await supabase.from("competition_sets").delete().eq("id", id);
+    onChanged();
+  }
+  async function removeClip(setId: string, clipId: string) {
+    await supabase.from("competition_set_clips").delete().eq("competition_set_id", setId).eq("clip_id", clipId);
+    onChanged();
+  }
+
+  function clipsForSet(setId: string): ScoutClip[] {
+    const ids = new Set(memberships.filter((m) => m.competition_set_id === setId).map((m) => m.clip_id));
+    return clips.filter((c) => ids.has(c.id));
+  }
+
+  function runRadar(setId: string) {
+    setRadar((r) => ({ ...r, [setId]: computeOpportunityRadar(clipsForSet(setId)) }));
+    setShowRadarFor(setId);
+  }
+
+  async function saveOpportunity(setId: string, label: string) {
+    if (!userId) return;
+    setCreatingOpportunity(setId);
+    const setClips = clipsForSet(setId);
+    const computed = radar[setId] ?? computeOpportunityRadar(setClips);
+    await supabase.from("scout_opportunities").insert({
+      user_id: userId,
+      title: label,
+      competition_set_id: setId,
+      evidence: setClips.map((c) => ({ type: "scout_clip", id: c.id })),
+      score: computed,
+      status: "new",
+    });
+    setCreatingOpportunity(null);
+    onChanged();
+  }
+
+  return (
+    <div className="panel">
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Competition Sets</div>
+      <p className="hint" style={{ marginBottom: "10px" }}>Group clipped books together to compare and analyze them as a market.</p>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "14px" }}>
+        <input placeholder="New set name…" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} style={{ flex: 1 }} />
+        <button className="btn btn-secondary" onClick={createSet}>+ New Set</button>
+      </div>
+      {sets.length === 0 && <p className="hint">Save books to create your first competition set — use &quot;+ Add to set&quot; on a clip in My Clips.</p>}
+      {sets.map((set) => {
+        const setClips = clipsForSet(set.id);
+        const isExpanded = expanded === set.id;
+        return (
+          <div key={set.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setExpanded(isExpanded ? null : set.id)}>
+              <span style={{ fontWeight: 600 }}>{set.label} ({setClips.length})</span>
+              <span className="hint">{isExpanded ? "▲" : "▼"}</span>
+            </div>
+            {isExpanded && (
+              <div style={{ marginTop: "10px" }}>
+                {setClips.length === 0 && <p className="hint">No books in this set yet.</p>}
+                {setClips.map((c) => (
+                  <div className="check-row" key={c.id}>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={comparing.has(c.id)}
+                        onChange={(e) => {
+                          const next = new Set(comparing);
+                          if (e.target.checked) next.add(c.id);
+                          else next.delete(c.id);
+                          setComparing(next);
+                        }}
+                      />
+                      {c.title || c.source_url} <span className="hint">({platformLabel(c.marketplace)})</span>
+                    </label>
+                    <button className="btn btn-secondary" style={{ padding: "2px 8px" }} onClick={() => removeClip(set.id, c.id)}>Remove</button>
+                  </div>
+                ))}
+                {comparing.size >= 2 && <ComparisonTable clips={setClips.filter((c) => comparing.has(c.id))} />}
+                <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
+                  <button className="btn btn-secondary" onClick={() => runRadar(set.id)} disabled={setClips.length === 0}>Opportunity Radar</button>
+                  <button className="btn btn-secondary" onClick={() => saveOpportunity(set.id, set.label)} disabled={creatingOpportunity === set.id || setClips.length === 0}>
+                    {creatingOpportunity === set.id ? "Saving…" : "Explore Opportunity"}
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => deleteSet(set.id)}>Delete Set</button>
+                </div>
+                {showRadarFor === set.id && radar[set.id] && <OpportunityRadarDisplay radar={radar[set.id]} />}
+                <NotesList scopeColumn="competition_set_id" scopeId={set.id} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function WatchlistPanel({ watched, clips, onChanged }: { watched: WatchedBook[]; clips: ScoutClip[]; onChanged: () => void }) {
+  const supabase = createClient();
+
+  async function unwatch(id: string) {
+    await supabase.from("watched_books").delete().eq("id", id);
+    onChanged();
+  }
+
+  function matchingClips(w: WatchedBook): ScoutClip[] {
+    return clips.filter((c) => (w.isbn ? c.isbn === w.isbn : c.marketplace === w.marketplace && c.external_id === w.external_id));
+  }
+
+  return (
+    <div className="panel">
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Watchlist</div>
+      <p className="hint" style={{ marginBottom: "10px" }}>
+        Books you&apos;re tracking. Updates only arrive when you clip a watched book again — nothing is checked automatically in the background.
+      </p>
+      {watched.length === 0 && <p className="hint">No watched books yet — use &quot;☆ Watch&quot; on a clip in My Clips.</p>}
+      {watched.map((w) => {
+        const matches = matchingClips(w);
+        const latest = matches.slice().sort((a, b) => new Date(b.clipped_at).getTime() - new Date(a.clipped_at).getTime())[0];
+        const bsrSeries = buildObservedSeries(matches, "bsr");
+        const priceSeries = buildObservedSeries(matches, "price");
+        return (
+          <div key={w.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
+            <div style={{ fontWeight: 600, fontSize: "13px" }}>{w.title || "Untitled"}{w.author ? ` — ${w.author}` : ""}</div>
+            <div className="hint" style={{ fontSize: "12px", marginBottom: "8px" }}>
+              {matches.length} observation(s) recorded
+              {latest?.price != null ? ` · latest price $${latest.price}` : ""}
+              {latest?.bsr != null ? ` · latest BSR #${latest.bsr.toLocaleString()}` : ""}
+              {latest ? ` · last seen ${new Date(latest.clipped_at).toLocaleDateString()}` : ""}
+            </div>
+            {matches.length < 2 && <p className="hint">Not enough observations yet — clip this book again later to start a trend.</p>}
+            {bsrSeries.length > 0 && (
+              <div className="hint" style={{ fontSize: "12px" }}>
+                BSR trend: {bsrSeries[0].direction === "down" ? "improving" : bsrSeries[0].direction === "up" ? "declining" : "stable"}
+              </div>
+            )}
+            {priceSeries.length > 0 && (
+              <div className="hint" style={{ fontSize: "12px" }}>
+                Price trend: {priceSeries[0].direction === "up" ? "increasing" : priceSeries[0].direction === "down" ? "decreasing" : "stable"}
+              </div>
+            )}
+            <button className="btn btn-secondary" style={{ marginTop: "8px" }} onClick={() => unwatch(w.id)}>Unwatch</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MarketScannerPanel({
+  snapshots,
+  competitionSets,
+  clips,
+  memberships,
+  userId,
+  onChanged,
+}: {
+  snapshots: ScoutSnapshot[];
+  competitionSets: CompetitionSet[];
+  clips: ScoutClip[];
+  memberships: CompetitionSetClipRow[];
+  userId: string | null;
+  onChanged: () => void;
+}) {
+  const supabase = createClient();
+  const [source, setSource] = useState<string>("");
+  const [result, setResult] = useState<MarketScanResult | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  function clipsForSource(): ScoutClip[] {
+    if (!source) return [];
+    const [kind, id] = [source.slice(0, source.indexOf(":")), source.slice(source.indexOf(":") + 1)];
+    if (kind === "snapshot") return clips.filter((c) => c.snapshot_id === id);
+    if (kind === "set") {
+      const ids = new Set(memberships.filter((m) => m.competition_set_id === id).map((m) => m.clip_id));
+      return clips.filter((c) => ids.has(c.id));
+    }
+    return [];
+  }
+
+  function run() {
+    setResult(scanMarket(clipsForSource()));
+  }
+
+  async function createOpportunity() {
+    if (!userId || !result) return;
+    setCreating(true);
+    const label =
+      source.startsWith("snapshot:")
+        ? snapshots.find((s) => s.id === source.slice("snapshot:".length))?.label
+        : competitionSets.find((s) => s.id === source.slice("set:".length))?.label;
+    await supabase.from("scout_opportunities").insert({
+      user_id: userId,
+      title: label || "Market opportunity",
+      market: label || null,
+      evidence: clipsForSource().map((c) => ({ type: "scout_clip", id: c.id })),
+      status: "new",
+    });
+    setCreating(false);
+    onChanged();
+  }
+
+  const sourceOptions = [
+    ...snapshots.map((s) => ({ value: `snapshot:${s.id}`, label: `📸 ${s.label}` })),
+    ...competitionSets.map((s) => ({ value: `set:${s.id}`, label: `📁 ${s.label}` })),
+  ];
+
+  return (
+    <div className="panel">
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Market Scanner</div>
+      <p className="hint" style={{ marginBottom: "10px" }}>
+        Analyzes books you&apos;ve already clipped into a snapshot or competition set — never a live scan of a marketplace page.
+      </p>
+      {sourceOptions.length === 0 ? (
+        <p className="hint">Clip a few books into a snapshot or competition set to run the Market Scanner.</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+            <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">Choose a snapshot or competition set…</option>
+              {sourceOptions.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <button className="btn btn-secondary" onClick={run} disabled={!source}>Scan</button>
+          </div>
+          {result && (
+            <div className="checklist-panel">
+              <div>Books analyzed: {result.booksAnalyzed}</div>
+              <div>Observed categories: {result.observedCategories}</div>
+              {result.priceRange && <div>Price range: ${result.priceRange.min} – ${result.priceRange.max} (avg ${result.priceRange.avg})</div>}
+              {result.topClusters.length > 0 ? (
+                <div style={{ marginTop: "8px" }}>
+                  <div className="hint" style={{ fontWeight: 700 }}>Top clusters</div>
+                  {result.topClusters.map((c) => (
+                    <div key={c.label} className="hint">{c.label} ({c.matchingBooks} book(s))</div>
+                  ))}
+                </div>
+              ) : (
+                <p className="hint">Not enough title data yet to identify clusters.</p>
+              )}
+              <button className="btn btn-secondary" style={{ marginTop: "10px" }} onClick={createOpportunity} disabled={creating}>
+                {creating ? "Saving…" : "Create Opportunity from this Market"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+const OPPORTUNITY_STATUSES = ["new", "reviewing", "researching", "approved", "rejected"] as const;
+
+function OpportunityWorkspacePanel({
+  opportunities,
+  clips,
+  memberships,
+  onChanged,
+  onOpenSession,
+}: {
+  opportunities: ScoutOpportunity[];
+  clips: ScoutClip[];
+  memberships: CompetitionSetClipRow[];
+  onChanged: () => void;
+  onOpenSession: (id: string) => void;
+}) {
+  const supabase = createClient();
+  const [starting, setStarting] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState<string | null>(null);
+
+  function clipsForOpportunity(o: ScoutOpportunity): ScoutClip[] {
+    if (!o.competition_set_id) return [];
+    const ids = new Set(memberships.filter((m) => m.competition_set_id === o.competition_set_id).map((m) => m.clip_id));
+    return clips.filter((c) => ids.has(c.id));
+  }
+
+  async function setStatus(o: ScoutOpportunity, status: string) {
+    await supabase.from("scout_opportunities").update({ status }).eq("id", o.id);
+    onChanged();
+  }
+
+  async function startResearch(o: ScoutOpportunity) {
+    setStarting(o.id);
+    const { data: session, error } = await supabase
+      .from("research_sessions")
+      .insert({ topic: o.title, mode: "book_opportunity", platforms: ["amazon", "google_play", "kobo", "web"], status: "queued", stages: [] })
+      .select("id")
+      .single();
+    if (!error && session) {
+      for (const c of clipsForOpportunity(o)) {
+        await supabase.from("competitor_research").insert({
+          session_id: session.id,
+          title: c.title || c.source_url,
+          author: c.author,
+          price: c.price,
+          category: c.category,
+          source_url: c.source_url,
+          platform: c.marketplace === "google_play_books" ? "google_play" : c.marketplace,
+          source_type: "browser_clip",
+          confidence: "high",
+        });
+      }
+      await supabase.from("scout_opportunities").update({ session_id: session.id, status: "researching" }).eq("id", o.id);
+    }
+    setStarting(null);
+    onChanged();
+  }
+
+  async function analyze(o: ScoutOpportunity) {
+    const setClips = clipsForOpportunity(o).filter((c) => c.title);
+    if (setClips.length === 0) return;
+    setAnalyzing(o.id);
+    try {
+      const res = await fetch("/api/inkframescout/differentiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clip_ids: setClips.map((c) => c.id), opportunity_id: o.id }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+    } catch {
+      // Surfaced by the opportunity's fields staying empty — the user can retry from here.
+    }
+    setAnalyzing(null);
+    onChanged();
+  }
+
+  return (
+    <div className="panel">
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>Opportunity Workspace</div>
+      <p className="hint" style={{ marginBottom: "10px" }}>
+        Only an opportunity you explicitly approve, then explicitly turn into research, can ever become a Book Project.
+      </p>
+      {opportunities.length === 0 && <p className="hint">Scan a market or save a competition set to begin opportunity analysis.</p>}
+      {opportunities.map((o) => (
+        <div key={o.id} className="checklist-panel" style={{ marginBottom: "10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>{o.title}</span>
+            {o.status === "converted_to_project" ? (
+              <span className="ok">converted to project</span>
+            ) : (
+              <select value={o.status} onChange={(e) => setStatus(o, e.target.value)}>
+                {OPPORTUNITY_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          {o.market && <div className="hint" style={{ fontSize: "12px" }}>Market: {o.market}</div>}
+          {o.score && (
+            <div className="hint" style={{ fontSize: "12px", marginTop: "6px" }}>
+              Opportunity score: {o.score.overall != null ? `${o.score.overall}/100` : "insufficient data"} ({o.score.confidence})
+            </div>
+          )}
+          {o.potential_audience && (
+            <div style={{ fontSize: "12px", marginTop: "8px" }}>
+              <strong>Potential audience (RECOMMENDED):</strong> {o.potential_audience}
+            </div>
+          )}
+          {o.potential_differentiation && (
+            <div style={{ fontSize: "12px", marginTop: "4px" }}>
+              <strong>Differentiation directions (RECOMMENDED):</strong>
+              <div style={{ whiteSpace: "pre-wrap" }}>{o.potential_differentiation}</div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
+            <button className="btn btn-secondary" onClick={() => analyze(o)} disabled={analyzing === o.id || !o.competition_set_id}>
+              {analyzing === o.id ? "Analyzing…" : "What would you build instead?"}
+            </button>
+            {!o.session_id ? (
+              <button className="btn btn-secondary" onClick={() => startResearch(o)} disabled={starting === o.id}>
+                {starting === o.id ? "Starting…" : "Start Research"}
+              </button>
+            ) : (
+              <button className="btn btn-secondary" onClick={() => onOpenSession(o.session_id!)}>Open Research Session →</button>
+            )}
+          </div>
+          <NotesList scopeColumn="opportunity_id" scopeId={o.id} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InkframeScoutWorkspace({ onOpenSession }: { onOpenSession: (id: string) => void }) {
+  const supabase = createClient();
+  const [userId, setUserId] = useState<string | null>(null);
+  const [clips, setClips] = useState<ScoutClip[]>([]);
+  const [sessions, setSessions] = useState<{ id: string; topic: string }[]>([]);
+  const [snapshots, setSnapshots] = useState<ScoutSnapshot[]>([]);
+  const [competitionSets, setCompetitionSets] = useState<CompetitionSet[]>([]);
+  const [memberships, setMemberships] = useState<CompetitionSetClipRow[]>([]);
+  const [watched, setWatched] = useState<WatchedBook[]>([]);
+  const [opportunities, setOpportunities] = useState<ScoutOpportunity[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  async function loadAll() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+    const [{ data: c }, { data: s }, { data: snaps }, { data: sets }, { data: mem }, { data: w }, { data: opps }] = await Promise.all([
+      supabase
+        .from("scout_clips")
+        .select("id, marketplace, title, author, source_url, external_id, isbn, price, bsr, category, category_rank, rating, review_count, published_date, clipped_at, status, snapshot_id")
+        .neq("status", "discarded")
+        .order("clipped_at", { ascending: false })
+        .limit(300),
+      supabase.from("research_sessions").select("id, topic").order("created_at", { ascending: false }).limit(30),
+      supabase.from("scout_snapshots").select("id, label").order("created_at", { ascending: false }).limit(50),
+      supabase.from("competition_sets").select("id, label").order("created_at", { ascending: false }).limit(50),
+      supabase.from("competition_set_clips").select("competition_set_id, clip_id"),
+      supabase.from("watched_books").select("id, isbn, marketplace, external_id, title, author").order("created_at", { ascending: false }),
+      supabase
+        .from("scout_opportunities")
+        .select("id, title, market, competition_set_id, session_id, project_id, score, potential_audience, potential_positioning, potential_differentiation, risks, status")
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
+    setClips((c as ScoutClip[]) ?? []);
+    setSessions(s ?? []);
+    setSnapshots((snaps as ScoutSnapshot[]) ?? []);
+    setCompetitionSets((sets as CompetitionSet[]) ?? []);
+    setMemberships((mem as CompetitionSetClipRow[]) ?? []);
+    setWatched((w as WatchedBook[]) ?? []);
+    setOpportunities((opps as ScoutOpportunity[]) ?? []);
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    (async () => {
+      await loadAll();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  if (!loaded) return null;
+  // Nothing InkframeScout-related exists yet for this user — stay out of the way rather than
+  // showing five empty panels to someone who's never installed the extension.
+  if (clips.length === 0 && competitionSets.length === 0 && watched.length === 0 && opportunities.length === 0) return null;
+
+  return (
+    <>
+      <MyClipsPanel clips={clips} sessions={sessions} snapshots={snapshots} competitionSets={competitionSets} watched={watched} userId={userId} onChanged={refresh} />
+      <CompetitionSetsPanel sets={competitionSets} memberships={memberships} clips={clips} userId={userId} onChanged={refresh} />
+      <WatchlistPanel watched={watched} clips={clips} onChanged={refresh} />
+      <MarketScannerPanel snapshots={snapshots} competitionSets={competitionSets} clips={clips} memberships={memberships} userId={userId} onChanged={refresh} />
+      <OpportunityWorkspacePanel opportunities={opportunities} clips={clips} memberships={memberships} onChanged={refresh} onOpenSession={onOpenSession} />
+    </>
   );
 }
 
@@ -1086,7 +1738,12 @@ export default function ResearchPage() {
 
         {view === "overview" && (
           <>
-            <MyClipsPanel />
+            <InkframeScoutWorkspace
+              onOpenSession={(id) => {
+                setActiveSessionId(id);
+                setView("session");
+              }}
+            />
             <Overview
               onSelect={(id) => {
                 setActiveSessionId(id);

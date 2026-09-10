@@ -72,6 +72,7 @@ export type BookPassport = {
   audiobook: { status: string | null; voice: string | null } | null;
   publishing: { targetPlatform: string; status: string }[];
   marketing: { hasStrategy: boolean };
+  declarations: { rightsConfirmed: boolean; rightsBasis: string | null; aiDisclosureAcknowledged: boolean } | null;
 };
 
 export async function assembleBookPassport(supabase: SupabaseClient, projectId: string): Promise<BookPassport | null> {
@@ -92,6 +93,7 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     { data: audiobookJob },
     { data: publishingJobs },
     { data: advertisingProject },
+    { data: declarations },
   ] = await Promise.all([
     supabase.from("projects").select("id, book_type, status").eq("id", projectId).maybeSingle(),
     supabase.from("project_identity").select("*").eq("project_id", projectId).maybeSingle(),
@@ -115,6 +117,7 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     supabase.from("audiobook_jobs").select("status, voice").eq("project_id", projectId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("publishing_jobs").select("target_platform, status").eq("project_id", projectId),
     supabase.from("advertising_projects").select("id").eq("project_id", projectId).maybeSingle(),
+    supabase.from("publishing_declarations").select("rights_confirmed, rights_basis, ai_disclosure_acknowledged").eq("project_id", projectId).maybeSingle(),
   ]);
 
   if (!project) return null;
@@ -207,6 +210,13 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     audiobook: audiobookJob ? { status: audiobookJob.status, voice: audiobookJob.voice } : null,
     publishing: (publishingJobs ?? []).map((p) => ({ targetPlatform: p.target_platform, status: p.status })),
     marketing: { hasStrategy: !!advertisingProject },
+    declarations: declarations
+      ? {
+          rightsConfirmed: declarations.rights_confirmed,
+          rightsBasis: declarations.rights_basis,
+          aiDisclosureAcknowledged: declarations.ai_disclosure_acknowledged,
+        }
+      : null,
   };
 }
 
@@ -221,7 +231,11 @@ export type BookHealth = { checks: BookHealthCheck[]; readinessPct: number };
  * fabricated percentage: every check reads a real column already
  * assembled by assembleBookPassport. Paperback only counts if one was
  * actually generated — it's opt-in, so a book that never wanted one isn't
- * penalized for not having it.
+ * penalized for not having it. Rights confirmation and AI-disclosure
+ * acknowledgment are real author self-attestations (set from /publish,
+ * see publishing_declarations) — InkFrame has no way to submit either to
+ * a platform on the author's behalf, so this only tracks that the author
+ * reviewed and confirmed them before publishing.
  */
 export function computeBookHealth(passport: BookPassport): BookHealth {
   const projectId = passport.projectId;
@@ -233,6 +247,8 @@ export function computeBookHealth(passport: BookPassport): BookHealth {
     { label: "Metadata", ok: passport.metadata.status === "done", route: `/metadata?project=${projectId}` },
     { label: "Quality gate scored", ok: !!passport.qualityGate?.overallReadinessScore, route: `/publish?project=${projectId}` },
     ...(paperbackEdition ? [{ label: "Paperback print cover", ok: paperbackEdition.status === "ready", route: `/cover?project=${projectId}` }] : []),
+    { label: "Rights confirmed", ok: !!passport.declarations?.rightsConfirmed, route: `/publish?project=${projectId}` },
+    { label: "AI-content disclosure acknowledged", ok: !!passport.declarations?.aiDisclosureAcknowledged, route: `/publish?project=${projectId}` },
   ];
   return { checks, readinessPct: Math.round((checks.filter((c) => c.ok).length / checks.length) * 100) };
 }

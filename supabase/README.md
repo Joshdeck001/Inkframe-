@@ -76,6 +76,30 @@
      `project_scope.trim_size` (the wizard's new "Trim Size" question —
      `5x8`/`5.5x8.5`/`6x9`/`8.5x11`, defaulting to `6x9`), so the exported
      manuscript's page size is a real user choice instead of hardcoded.
+   - `supabase/migrations/0014_ai_provider_preference.sql` — adds
+     `profiles.preferred_ai_provider` and a `set_preferred_ai_provider()`
+     RPC (security definer, self-scoped via `auth.uid()`) so a user can
+     pin their own AI calls (Writing Agent, Quality Loop, Cover, Metadata,
+     Research, Advertising, Copilot) to one provider from `/settings`
+     without opening a broad `UPDATE` policy on `profiles`.
+   - `supabase/migrations/0015_audiobook.sql` — `audiobook_jobs` +
+     `audiobook_segments` for Audiobook Studio, and a private
+     `audiobooks` storage bucket (server-write-only, played back through a
+     signed-URL route — same pattern as `exports`).
+   - `supabase/migrations/0016_research_evidence.sql` — real evidence-only
+     Research workspace: `competitor_research`, `keyword_research`,
+     `category_research`, `research_reports`, plus `source_type`/
+     `confidence` columns on `research_notes` so a note is always
+     traceable to where it actually came from (never a fabricated finding
+     dressed up as data).
+   - `supabase/migrations/0017_publishing_declarations.sql` — one
+     `publishing_declarations` row per project: the author's own rights
+     confirmation and AI-content-disclosure acknowledgment, edited from
+     `/publish`. InkFrame has no KDP API to submit either on the author's
+     behalf (see "KDP integration" in the root `README.md`), so this is
+     purely the record of the author having reviewed and confirmed them
+     before publishing — a real gate in the Book Health checklist instead
+     of a one-time informational note nobody has to act on.
 
    Easiest path: open the Supabase dashboard's **SQL Editor**, paste each
    file's contents in order, and run it. If you have the Supabase CLI linked

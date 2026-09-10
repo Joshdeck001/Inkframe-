@@ -1249,6 +1249,51 @@ What the audit of `/publish` did find, and fix, while confirming the above:
   falling back to the suggestion only when the author hasn't priced the
   book yet.
 
+## Publishing Control Center: rights confirmation and AI-disclosure, made real gates
+
+A follow-up spec described `/publish` as a "Publishing Control Center" that
+gates on completeness across every real KDP field — manuscript, files,
+cover, title/author/description/categories/keywords, pricing, **rights**,
+and **AI-content disclosure** — before a KDP Preflight, then either an
+official integration (declined above — none exists) or the KDP Ready
+Package handoff already built.
+
+Auditing against that list found two fields genuinely missing, not just
+unwired:
+
+- **Rights.** Nothing in the schema recorded whether the author actually
+  holds the rights to publish a book's content — not even a placeholder.
+  Real platforms (KDP included) ask for exactly this at upload.
+- **AI-content disclosure.** This one already existed, but only as an
+  automated `compliance_checks` row (`check_type: 'ai_disclosure'`) that
+  `runComplianceDepartmentTick` inserts once and that just sits at
+  `action_required` forever on `/compliance` — informational, nothing the
+  author could ever mark done, and not part of Book Health at all.
+
+Both are now real: `supabase/migrations/0017_publishing_declarations.sql`
+adds one `publishing_declarations` row per project (rights basis + note +
+confirmed flag, AI-disclosure-acknowledged flag), editable from a new
+"Rights & AI-Content Disclosure" panel on `/publish` with the same
+debounced autosave as Pricing. `computeBookHealth()` (`lib/book-passport.ts`)
+now includes both as real checks, so `/passport` and the dashboard's Tasks
+widget see them too — one computation, not a second copy. Neither can be
+faked into "done": InkFrame has no KDP API to submit either on the
+author's behalf, so this only ever records that the author reviewed and
+confirmed them themselves, same as it will on KDP's own upload form.
+
+**Hardcover** was also audited against the same list. `format_editions`
+already allows `format_type = 'hardcover'` (dormant, like `paperback` was
+before this session's print-cover work), but nothing generates hardcover
+interior or cover files — KDP hardcover uses its own case-wrap template
+math, distinct from paperback's, and building that is a real feature on
+the same order as the paperback cover work, not a quick follow-on. Rather
+than fake a "ready" status or silently drop it from the list, `/publish`
+now shows an honest "Hardcover — Files: Not available yet" row next to the
+existing honest "Paperback — Interior PDF" row, so nothing implies support
+that isn't there. Not counted in the Book Health percentage — like
+paperback, hardcover would be opt-in, but unlike paperback there's
+currently no way to ever make it "ready."
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

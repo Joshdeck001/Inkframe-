@@ -12,6 +12,16 @@ type Platform = "Amazon KDP" | "Kobo" | "Google Play Books" | "Apple Books";
 type FormatType = "ebook" | "paperback" | "hardcover";
 const FORMAT_LABELS: Record<FormatType, string> = { ebook: "Kindle eBook", paperback: "Paperback", hardcover: "Hardcover" };
 
+type RightsBasis = "original" | "public_domain" | "licensed" | "other";
+const RIGHTS_BASIS_LABELS: Record<RightsBasis, string> = {
+  original: "Original work I wrote/created",
+  public_domain: "Public domain content",
+  licensed: "Licensed content I hold the rights to use",
+  other: "Other (describe below)",
+};
+type Declarations = { rightsBasis: RightsBasis | ""; rightsNote: string; rightsConfirmed: boolean; aiDisclosureAcknowledged: boolean };
+const EMPTY_DECLARATIONS: Declarations = { rightsBasis: "", rightsNote: "", rightsConfirmed: false, aiDisclosureAcknowledged: false };
+
 const PLATFORM_LINKS: Record<Platform, string> = {
   "Amazon KDP": "https://kdp.amazon.com/bookshelf",
   Kobo: "https://www.kobo.com/writinglife",
@@ -60,6 +70,10 @@ function PublishBody() {
   const [priceSaveState, setPriceSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const priceSkipAutosave = useRef(true);
 
+  const [declarations, setDeclarations] = useState<Declarations>(EMPTY_DECLARATIONS);
+  const [declarationsSaveState, setDeclarationsSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const declarationsSkipAutosave = useRef(true);
+
   const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
@@ -83,9 +97,14 @@ function PublishBody() {
     if (!projectId) return;
     let cancelled = false;
     (async () => {
-      const [result, { data: editions }] = await Promise.all([
+      const [result, { data: editions }, { data: declarationsRow }] = await Promise.all([
         assembleBookPassport(supabase, projectId),
         supabase.from("format_editions").select("format_type, price").eq("project_id", projectId),
+        supabase
+          .from("publishing_declarations")
+          .select("rights_basis, rights_note, rights_confirmed, ai_disclosure_acknowledged")
+          .eq("project_id", projectId)
+          .maybeSingle(),
       ]);
       if (cancelled || !result) return;
       setPassport(result);
@@ -99,6 +118,17 @@ function PublishBody() {
         }
       }
       setPrices(priceByFormat);
+      declarationsSkipAutosave.current = true;
+      setDeclarations(
+        declarationsRow
+          ? {
+              rightsBasis: (declarationsRow.rights_basis as RightsBasis | null) ?? "",
+              rightsNote: declarationsRow.rights_note ?? "",
+              rightsConfirmed: declarationsRow.rights_confirmed,
+              aiDisclosureAcknowledged: declarationsRow.ai_disclosure_acknowledged,
+            }
+          : EMPTY_DECLARATIONS
+      );
       setApproved(["USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(result.workflowStage));
       setPublished(result.workflowStage === "EXPORTED");
       setLoading(false);
@@ -129,6 +159,35 @@ function PublishBody() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prices, projectId]);
+
+  // Rights confirmation and AI-disclosure acknowledgment: real author
+  // self-attestations InkFrame has no way to submit to a platform itself
+  // (no KDP API exists — see README), so this just records that the
+  // author reviewed and confirmed them. Same debounced-autosave pattern
+  // as pricing above.
+  useEffect(() => {
+    if (!projectId) return;
+    if (declarationsSkipAutosave.current) {
+      declarationsSkipAutosave.current = false;
+      return;
+    }
+    setDeclarationsSaveState("saving");
+    const timer = setTimeout(async () => {
+      await supabase.from("publishing_declarations").upsert(
+        {
+          project_id: projectId,
+          rights_basis: declarations.rightsBasis || null,
+          rights_note: declarations.rightsNote || null,
+          rights_confirmed: declarations.rightsConfirmed,
+          ai_disclosure_acknowledged: declarations.aiDisclosureAcknowledged,
+        },
+        { onConflict: "project_id" }
+      );
+      setDeclarationsSaveState("saved");
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [declarations, projectId]);
 
   async function handleApprove() {
     if (!projectId) return;
@@ -269,6 +328,11 @@ function PublishBody() {
                 }
               />
               <CheckRow
+                label="Hardcover — Files"
+                ok={false}
+                text="Not available yet — InkFrame doesn't generate hardcover interior/cover files; use paperback or eBook for now"
+              />
+              <CheckRow
                 label="Pricing"
                 ok={hasAnyPrice}
                 text={hasAnyPrice ? "✓ Set below" : "Not set — enter a price below"}
@@ -317,6 +381,82 @@ function PublishBody() {
                 Real prices you set, saved to this book&apos;s format editions as you type. Leave a format blank
                 to fall back on InkFrame&apos;s starting suggestion when a listing is prepared below.
               </p>
+            </div>
+
+            <div className="checklist-panel" style={{ marginBottom: "22px" }}>
+              <div style={{ fontWeight: 700, marginBottom: "10px" }}>
+                Rights &amp; AI-Content Disclosure
+                {declarationsSaveState === "saving" && (
+                  <span style={{ fontWeight: 400, fontSize: "12px", color: "var(--muted)", marginLeft: "10px" }}>Saving…</span>
+                )}
+                {declarationsSaveState === "saved" && (
+                  <span style={{ fontWeight: 400, fontSize: "12px", color: "#5fe3b8", marginLeft: "10px" }}>✓ Saved</span>
+                )}
+              </div>
+
+              <p className="hint" style={{ marginBottom: "10px" }}>
+                Amazon KDP and every other platform ask you to confirm these yourself during upload — InkFrame
+                can&apos;t submit either on your behalf, so this just records that you&apos;ve reviewed them.
+              </p>
+
+              <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>
+                Where does this content&apos;s rights come from?
+              </label>
+              <select
+                value={declarations.rightsBasis}
+                onChange={(e) => setDeclarations((d) => ({ ...d, rightsBasis: e.target.value as RightsBasis | "" }))}
+                style={{ marginBottom: "10px" }}
+              >
+                <option value="">— Select —</option>
+                {(Object.keys(RIGHTS_BASIS_LABELS) as RightsBasis[]).map((k) => (
+                  <option key={k} value={k}>
+                    {RIGHTS_BASIS_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+
+              <textarea
+                value={declarations.rightsNote}
+                onChange={(e) => setDeclarations((d) => ({ ...d, rightsNote: e.target.value }))}
+                placeholder="Optional — any notes on licensing/sourcing you want on record for yourself."
+                rows={2}
+                style={{
+                  width: "100%",
+                  background: "#0d1626",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  color: "#fff",
+                  fontSize: "13px",
+                  fontFamily: "inherit",
+                  marginBottom: "12px",
+                }}
+              />
+
+              <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontSize: "13px", marginBottom: "14px" }}>
+                <input
+                  type="checkbox"
+                  checked={declarations.rightsConfirmed}
+                  onChange={(e) => setDeclarations((d) => ({ ...d, rightsConfirmed: e.target.checked }))}
+                  style={{ marginTop: "2px" }}
+                />
+                <span>I confirm I hold the necessary rights to publish this content.</span>
+              </label>
+
+              <p className="hint" style={{ marginBottom: "8px" }}>
+                This manuscript was AI-generated. Most platforms — Amazon KDP included — require disclosing
+                AI-generated content (not just AI-assisted) during upload. If a meaningful share of the text is
+                your own substantial rewrite instead, keep your own record of prompts/edits to support that.
+              </p>
+              <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontSize: "13px" }}>
+                <input
+                  type="checkbox"
+                  checked={declarations.aiDisclosureAcknowledged}
+                  onChange={(e) => setDeclarations((d) => ({ ...d, aiDisclosureAcknowledged: e.target.checked }))}
+                  style={{ marginTop: "2px" }}
+                />
+                <span>I acknowledge this and will disclose AI-generated content where the platform requires it.</span>
+              </label>
             </div>
 
             {!approved ? (

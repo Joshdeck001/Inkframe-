@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { withJsonErrors } from "@/lib/api-guard";
+import { withCors, corsPreflight } from "@/lib/scout-cors";
 import { resolveConnection } from "@/lib/scout-connection";
 
 export const dynamic = "force-dynamic";
+export const OPTIONS = corsPreflight;
 
 /**
  * The extension calls this once, right after the user pastes the
@@ -12,7 +14,7 @@ export const dynamic = "force-dynamic";
  * the code itself is the only credential, resolved server-side, never a
  * client-supplied user id.
  */
-export const POST = withJsonErrors(async (request: Request) => {
+export const POST = withCors(withJsonErrors(async (request: Request) => {
   const { code } = await request.json();
   if (typeof code !== "string" || !code) return NextResponse.json({ error: "code is required" }, { status: 400 });
 
@@ -23,4 +25,4 @@ export const POST = withJsonErrors(async (request: Request) => {
   const { data: userData } = await service.auth.admin.getUserById(resolved.userId);
 
   return NextResponse.json({ connected: true, account_email: userData?.user?.email ?? null });
-});
+}));

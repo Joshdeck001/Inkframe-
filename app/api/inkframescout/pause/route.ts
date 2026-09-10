@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { withJsonErrors } from "@/lib/api-guard";
+import { withCors, corsPreflight } from "@/lib/scout-cors";
 import { resolveConnection, extractBearerToken } from "@/lib/scout-connection";
 
 export const dynamic = "force-dynamic";
+export const OPTIONS = corsPreflight;
 
 /**
  * Pause/resume (spec section 5/28) — distinct from Disconnect/Revoke: the
@@ -12,7 +14,7 @@ export const dynamic = "force-dynamic";
  * from either the extension popup (bearer token) or Settings (session
  * auth via RLS directly) — this route exists for the extension side.
  */
-export const POST = withJsonErrors(async (request: Request) => {
+export const POST = withCors(withJsonErrors(async (request: Request) => {
   const token = extractBearerToken(request);
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
@@ -26,4 +28,4 @@ export const POST = withJsonErrors(async (request: Request) => {
   await service.from("extension_connections").update({ paused }).eq("id", resolved.connectionId);
 
   return NextResponse.json({ paused });
-});
+}));

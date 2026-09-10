@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { withJsonErrors } from "@/lib/api-guard";
+import { withCors, corsPreflight } from "@/lib/scout-cors";
 import { resolveConnection, extractBearerToken } from "@/lib/scout-connection";
 
 export const dynamic = "force-dynamic";
+export const OPTIONS = corsPreflight;
 
 /**
  * Market Snapshots group clips the user deliberately clicked, one at a
@@ -12,7 +14,7 @@ export const dynamic = "force-dynamic";
  * Listed here so the extension popup can offer "continue this snapshot"
  * instead of starting a new one on every click.
  */
-export const GET = withJsonErrors(async (request: Request) => {
+export const GET = withCors(withJsonErrors(async (request: Request) => {
   const token = extractBearerToken(request);
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
@@ -40,9 +42,9 @@ export const GET = withJsonErrors(async (request: Request) => {
   return NextResponse.json({
     snapshots: (snapshots ?? []).map((s) => ({ ...s, clip_count: counts[s.id] ?? 0 })),
   });
-});
+}));
 
-export const POST = withJsonErrors(async (request: Request) => {
+export const POST = withCors(withJsonErrors(async (request: Request) => {
   const token = extractBearerToken(request);
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
@@ -61,4 +63,4 @@ export const POST = withJsonErrors(async (request: Request) => {
   if (error || !data) return NextResponse.json({ error: error?.message || "Could not create snapshot." }, { status: 500 });
 
   return NextResponse.json({ snapshot: { ...data, clip_count: 0 } });
-});
+}));

@@ -293,6 +293,154 @@ All in `.env.local` (gitignored, never committed) — see
       including that a non-admin's own attempt to insert a message is
       rejected.
 
+## Connecting InkframeScout to a local InkFrame, and testing it live
+
+Everything above gets InkFrame itself running locally. This section is the
+missing last mile: pairing the real browser extension with that local
+server and confirming a real capture actually reaches Research — the one
+part of this app that can't be verified by `tsc`/`eslint`/a build/a fake-DOM
+runtime test alone, because it needs a real browser enforcing real browser
+security policy. A live walkthrough here is still something you run
+yourself (this repo's own build/test environment has no browser to load an
+extension into or a live Supabase project to connect it to) — this section
+is the exact runbook for doing that.
+
+**1. Get InkFrame running locally.**
+
+```bash
+npm install
+cp .env.local.example .env.local   # fill in Supabase + at least one AI key
+npm run dev                        # http://localhost:3000
+```
+
+Apply every migration in `supabase/migrations/` in order against your
+Supabase project first (see `supabase/README.md`) — signing up before that
+will fail every database call. Sign up, then make yourself an admin only if
+you need `/admin`; a regular account is enough for everything below.
+
+**2. Load the extension.** There's no build step — `extension/` is already
+plain, unbundled Manifest V3 source. In Chrome (or any Chromium browser):
+`chrome://extensions` → enable **Developer mode** → **Load unpacked** →
+select the `extension/` folder. See `extension/README.md` for what's
+actually in there and why it's built this way.
+
+**3. Pair them.** In InkFrame: **Settings → Extensions → InkframeScout →
+Generate Connection Code**. In the extension's popup: paste
+`http://localhost:3000` as the InkFrame URL, paste the code, **Connect**.
+
+If this fails with a network-looking error but the server is clearly up,
+it's almost certainly CORS, not your setup — see "InkframeScout can't
+connect" under Troubleshooting below; this repo's own `/api/inkframescout/*`
+routes already send the right headers, so a fresh `git pull` should rule
+it out.
+
+**4. Capture one real, permitted piece of evidence.** Open any single
+book's product page on Amazon, Google Play Books, or Kobo — a real page,
+publicly visible, no login required to view it. Click **Capture Evidence**
+in the popup. This is the same single deliberate click the whole
+InkframeScout design is built around (see "InkframeScout — a real
+extension" below) — nothing scans the page automatically, nothing runs
+before or after that click.
+
+**5. Verify the full path, not just the popup's "✓ Saved".** In order:
+
+- The popup shows the captured title and a success message.
+- `Settings → Extensions → InkframeScout` shows an incremented clip count
+  and a real "Last sync" timestamp.
+- `/research` → **My Clips** shows the same book, with a real
+  **Evidence Completeness / Quality / Freshness** readout (not a fabricated
+  score).
+- Assigning it to a session inserts a real `competitor_research` row
+  tagged `source_type: 'browser_clip'` — visible in that session's evidence
+  table.
+
+If every one of those is true, the extension → API → database → Research
+path is genuinely connected end to end, not just individually unit-tested.
+
+**6. Exercise the rest of the core publishing loop** the same way, all
+through the real local UI: create/import a book project (`/wizard` or
+`/import`), let a research session run, generate a cover, run the
+formatter, fill in metadata, generate an audiobook chapter, open
+`/passport` (Book Health) and confirm its checklist reflects what you
+actually did (a step you skipped should show as incomplete, not green),
+then open `/publish` and confirm the readiness checklist and KDP-ready
+package reflect real state. None of this requires a second environment —
+it's the same `npm run dev` server from step 1.
+
+### Health check
+
+`GET /api/health` reports whether the server is up, whether it can reach
+Supabase, and which AI provider keys are configured (booleans only — never
+the key values). Useful as the first thing to check when something in the
+walkthrough above doesn't behave: `curl http://localhost:3000/api/health`.
+
+### Background jobs locally
+
+There's no separate worker process to start — every department (Writing
+Agent, Quality Loop, Cover, Metadata, Compliance, Formatting, Translation,
+Audiobook, KDP Preparation, Research) advances one unit of work per HTTP
+call to its own `/api/cron/<name>` route (or all of them via
+`/api/cron/all`), the same routes Vercel Cron calls on a schedule in
+production. Locally, call them yourself to advance a project without
+waiting for a schedule:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/all
+```
+
+### Known limitations
+
+- **No live marketplace scraping, by design** — InkframeScout only ever
+  reads the page the user is already looking at, on an explicit click. See
+  "InkframeScout — a real extension" and the v2/v3 sections below for the
+  full reasoning and what was deliberately declined.
+- **No live KDP (or other platform) submission** — every publishing path
+  ends in a real, complete prepared package and a handoff to the platform's
+  own site, never an automated submission. See "KDP integration" below.
+- **No billing/subscription system** — `PLAN_TIER` is a manual env-var
+  throughput toggle (`lib/plan-tier.ts`), not a real payments/subscription
+  integration. Not built speculatively; add it if and when this actually
+  needs to charge users.
+- **Translation only accepts uploaded DOCX**, not PDF/EPUB, for manuscript
+  import — those jobs fail honestly rather than hanging.
+- **No PDF export for ebook interiors** — DOCX and EPUB only; see "The
+  Professional Book Formatting Engine" below for why.
+- Live web research (Research's web-search stage) requires
+  `BRAVE_SEARCH_API_KEY`; without it, reports say so explicitly rather than
+  fabricating a "verified" source.
+
+### Troubleshooting
+
+- **Every Supabase call fails right after signup** — the schema isn't
+  applied yet. Run every file in `supabase/migrations/` in order (see
+  `supabase/README.md`).
+- **A cron/department route returns 401** — `CRON_SECRET` is unset, or
+  doesn't match what you passed in the `Authorization: Bearer` header.
+- **Every AI-backed feature (Blueprint, Writing Agent, Cover concepts,
+  research reports, differentiation analysis) fails or times out** — no AI
+  provider key is configured. One of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/
+  `GEMINI_API_KEY` is enough; `lib/ai-client.ts` falls through the ones you
+  have.
+- **Cover art never renders, concepts stay text-only** — cover artwork
+  needs a billing-enabled `OPENAI_API_KEY` or `GEMINI_API_KEY`; both
+  providers' free tiers have zero quota for image models.
+- **InkframeScout can't connect, or captures silently fail** — almost
+  always CORS: the extension's popup runs at a `chrome-extension://`
+  origin, a different origin from InkFrame's own, so every
+  `/api/inkframescout/*` call the extension makes needs the server's own
+  CORS headers (`lib/scout-cors.ts`) to be readable at all — a fixed
+  `host_permissions` entry can't substitute, since the InkFrame URL the
+  extension talks to is whatever the user types into the popup, not one
+  domain known in advance. If you're on an older checkout, `git pull` and
+  reload the extension.
+- **A capture says "Collection is paused"** — resume it from
+  `Settings → Extensions → InkframeScout`, or from the popup once it shows
+  the paused state.
+- **The extension's popup shows a stale snapshot list or clip count** —
+  it refreshes on open and after every action; if it still looks stale,
+  check `/api/health` and the browser console for the actual error rather
+  than assuming it's broken.
+
 ## Deploying on Vercel — Hobby vs. Pro
 
 **This project is now on Vercel Pro** (upgraded from Hobby). What that

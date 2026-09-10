@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { withJsonErrors } from "@/lib/api-guard";
+import { withCors, corsPreflight } from "@/lib/scout-cors";
 import { resolveConnection, extractBearerToken } from "@/lib/scout-connection";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
+export const OPTIONS = corsPreflight;
 
 const MARKETPLACES = ["amazon", "google_play_books", "kobo"];
 
@@ -19,7 +21,7 @@ const MARKETPLACES = ["amazon", "google_play_books", "kobo"];
  * /research's "My Clips" panel, same evidence tables every other
  * research path already writes to.
  */
-export const POST = withJsonErrors(async (request: Request) => {
+export const POST = withCors(withJsonErrors(async (request: Request) => {
   const token = extractBearerToken(request);
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
@@ -75,4 +77,4 @@ export const POST = withJsonErrors(async (request: Request) => {
   if (error || !data) return NextResponse.json({ error: error?.message || "Could not save the clip." }, { status: 500 });
 
   return NextResponse.json({ clip_id: data.id });
-});
+}));

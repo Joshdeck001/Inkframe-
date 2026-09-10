@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { withJsonErrors } from "@/lib/api-guard";
+import { withCors, corsPreflight } from "@/lib/scout-cors";
 import { resolveConnection, extractBearerToken } from "@/lib/scout-connection";
 
 export const dynamic = "force-dynamic";
+export const OPTIONS = corsPreflight;
 
 const SUPPORTED_MARKETPLACES = ["amazon", "google_play_books", "kobo"];
 
 /** Polled by the extension popup on open to show live connection/sync status. */
-export const GET = withJsonErrors(async (request: Request) => {
+export const GET = withCors(withJsonErrors(async (request: Request) => {
   const token = extractBearerToken(request);
   if (!token) return NextResponse.json({ error: "Missing bearer token" }, { status: 401 });
 
@@ -54,4 +56,4 @@ export const GET = withJsonErrors(async (request: Request) => {
     last_adapter_marketplace: lastClip?.marketplace ?? null,
     last_sync_at: lastClip?.clipped_at ?? null,
   });
-});
+}));

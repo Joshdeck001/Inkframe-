@@ -1,24 +1,16 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { css, title as pageTitle } from "@/content/publish";
+import { assembleBookPassport, computeBookHealth, type BookPassport } from "@/lib/book-passport";
 
 export const dynamic = "force-dynamic";
 
-type QualityGate = {
-  content_check: boolean;
-  structure_check: boolean;
-  continuity_check: boolean;
-  word_count_check: boolean;
-  metadata_check: boolean;
-  formatting_check: boolean;
-  cover_check: boolean;
-  overall_readiness_score: number;
-};
-
 type Platform = "Amazon KDP" | "Kobo" | "Google Play Books" | "Apple Books";
+type FormatType = "ebook" | "paperback" | "hardcover";
+const FORMAT_LABELS: Record<FormatType, string> = { ebook: "Kindle eBook", paperback: "Paperback", hardcover: "Hardcover" };
 
 const PLATFORM_LINKS: Record<Platform, string> = {
   "Amazon KDP": "https://kdp.amazon.com/bookshelf",
@@ -60,13 +52,13 @@ function PublishBody() {
   const supabase = createClient();
 
   const [projectStatus, setProjectStatus] = useState<string | null>(null);
-  const [gate, setGate] = useState<QualityGate | null>(null);
+  const [passport, setPassport] = useState<BookPassport | null>(null);
   const [loading, setLoading] = useState(!!projectId);
   const [approved, setApproved] = useState(false);
 
-  const [identity, setIdentity] = useState<{ working_title: string | null } | null>(null);
-  const [metadata, setMetadata] = useState<{ description_long: string | null; keywords: string[]; categories: string[] } | null>(null);
-  const [totalWords, setTotalWords] = useState(0);
+  const [prices, setPrices] = useState<Record<FormatType, string>>({ ebook: "", paperback: "", hardcover: "" });
+  const [priceSaveState, setPriceSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const priceSkipAutosave = useRef(true);
 
   const [selectedPlatform, setSelectedPlatform] = useState<Platform | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -91,27 +83,52 @@ function PublishBody() {
     if (!projectId) return;
     let cancelled = false;
     (async () => {
-      const [{ data: proj }, { data: gateRow }, { data: id }, { data: meta }, { data: scope }] = await Promise.all([
-        supabase.from("projects").select("status").eq("id", projectId).single(),
-        supabase.from("quality_gate").select("*").eq("project_id", projectId).maybeSingle(),
-        supabase.from("project_identity").select("working_title").eq("project_id", projectId).single(),
-        supabase.from("metadata_department").select("description_long, keywords, categories").eq("project_id", projectId).maybeSingle(),
-        supabase.from("project_scope").select("words_written").eq("project_id", projectId).maybeSingle(),
+      const [result, { data: editions }] = await Promise.all([
+        assembleBookPassport(supabase, projectId),
+        supabase.from("format_editions").select("format_type, price").eq("project_id", projectId),
       ]);
-      if (cancelled) return;
-      setProjectStatus(proj?.status ?? null);
-      setGate((gateRow as QualityGate) ?? null);
-      setIdentity(id ?? null);
-      setMetadata(meta ?? null);
-      setTotalWords(scope?.words_written ?? 0);
-      setApproved(!!proj && ["USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(proj.status));
-      setPublished(proj?.status === "EXPORTED");
+      if (cancelled || !result) return;
+      setPassport(result);
+      setProjectStatus(result.workflowStage);
+      priceSkipAutosave.current = true;
+      const priceByFormat: Record<FormatType, string> = { ebook: "", paperback: "", hardcover: "" };
+      for (const e of editions ?? []) {
+        const formatType = e.format_type as FormatType;
+        if (e.price != null && (formatType === "ebook" || formatType === "paperback" || formatType === "hardcover")) {
+          priceByFormat[formatType] = String(e.price);
+        }
+      }
+      setPrices(priceByFormat);
+      setApproved(["USER_APPROVED", "READY_FOR_EXPORT", "EXPORTED"].includes(result.workflowStage));
+      setPublished(result.workflowStage === "EXPORTED");
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Real per-format pricing, debounced-autosaved to format_editions — never
+  // silently overwritten by a suggestion once the author has set a real
+  // value (see suggestPrice below, only used as a fallback display).
+  useEffect(() => {
+    if (!projectId) return;
+    if (priceSkipAutosave.current) {
+      priceSkipAutosave.current = false;
+      return;
+    }
+    setPriceSaveState("saving");
+    const timer = setTimeout(async () => {
+      const writes = (Object.keys(prices) as FormatType[])
+        .filter((f) => prices[f].trim() !== "" && !isNaN(Number(prices[f])))
+        .map((f) => supabase.from("format_editions").upsert({ project_id: projectId, format_type: f, price: Number(prices[f]) }, { onConflict: "project_id,format_type" }));
+      if (writes.length > 0) await Promise.all(writes);
+      setPriceSaveState("saved");
+    }, 1000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prices, projectId]);
 
   async function handleApprove() {
     if (!projectId) return;
@@ -129,12 +146,20 @@ function PublishBody() {
     setPrepareError(null);
     try {
       const prepared = {
-        title: identity?.working_title || "Untitled Project",
-        description: metadata?.description_long || "No description generated yet.",
-        keywords: (metadata?.keywords ?? []).join(", ") || "No keywords generated yet.",
-        category: metadata?.categories?.[0] || "Not yet categorized",
-        price: suggestPrice(totalWords),
+        title: passport?.identity?.workingTitle || "Untitled Project",
+        description: "", // filled below via metadata_department, not tracked on the passport type
+        keywords: "",
+        category: "",
+        price: prices.ebook.trim() ? prices.ebook : suggestPrice(passport?.scope?.wordsWritten ?? 0),
       };
+      const { data: meta } = await supabase
+        .from("metadata_department")
+        .select("description_long, keywords, categories")
+        .eq("project_id", projectId)
+        .maybeSingle();
+      prepared.description = meta?.description_long || "No description generated yet.";
+      prepared.keywords = (meta?.keywords ?? []).join(", ") || "No keywords generated yet.";
+      prepared.category = meta?.categories?.[0] || "Not yet categorized";
 
       const { data: job, error } = await supabase
         .from("publishing_jobs")
@@ -142,7 +167,7 @@ function PublishBody() {
           {
             project_id: projectId,
             target_platform: platform,
-            readiness_snapshot: gate ?? {},
+            readiness_snapshot: passport?.qualityGate ?? {},
             prepared_fields: prepared,
             status: "ready_for_review",
           },
@@ -188,7 +213,11 @@ function PublishBody() {
     setPublished(true);
   }
 
-  const qualityPassed = gate ? gate.content_check && gate.structure_check && gate.continuity_check && gate.word_count_check : null;
+  const { checks: healthChecks, readinessPct } = passport ? computeBookHealth(passport) : { checks: [], readinessPct: 0 };
+  const gate = passport?.qualityGate ?? null;
+  const qualityPassed = gate ? gate.contentCheck && gate.structureCheck && gate.continuityCheck && gate.wordCountCheck : null;
+  const paperbackEdition = passport?.formatting.editions.find((e) => e.formatType === "paperback") ?? null;
+  const hasAnyPrice = Object.values(prices).some((p) => p.trim() !== "");
 
   return (
     <>
@@ -209,34 +238,86 @@ function PublishBody() {
 
         {!projectId && <p className="hint">No project specified. Head back to your dashboard to pick one.</p>}
         {projectId && loading && <p className="hint">Loading…</p>}
-        {projectId && !loading && !gate && (
-          <p className="hint">The Final Quality Gate hasn&apos;t run for this project yet — it runs automatically once Formatting finishes.</p>
-        )}
+        {projectId && !loading && !passport && <p className="hint">That project couldn&apos;t be found.</p>}
 
-        {gate && (
+        {passport && (
           <>
             <div className="checklist-panel">
-              <CheckRow label="Metadata" ok={gate.metadata_check} text={gate.metadata_check ? "✓ Complete" : "Incomplete"} />
-              <CheckRow label="eBook — Manuscript" ok={gate.formatting_check} text={gate.formatting_check ? "✓ Ready (.docx, .epub)" : "Not ready"} />
+              <div className="check-row">
+                <span>Overall Book Health</span>
+                <span className={readinessPct === 100 ? "ok" : undefined} style={readinessPct !== 100 ? { color: "#ffc266" } : undefined}>
+                  {readinessPct}% ready
+                </span>
+              </div>
+              {healthChecks.map((c) => (
+                <CheckRow key={c.label} label={c.label} ok={c.ok} text={c.ok ? "✓ Complete" : "Incomplete"} />
+              ))}
               <CheckRow
-                label="eBook — Cover (JPEG)"
-                ok={gate.cover_check ? null : false}
-                text={gate.cover_check ? "Concepts drafted — no artwork yet" : "Not started"}
+                label="Paperback — Interior PDF"
+                ok={false}
+                text="Not available yet — InkFrame doesn't generate a print-ready interior PDF; export the manuscript and lay it out yourself"
               />
-              <CheckRow label="Paperback — Interior PDF" ok={false} text="Not available yet" />
-              <CheckRow label="Paperback — Full Cover PDF" ok={false} text="Not available yet" />
-              <CheckRow label="Pricing" ok={false} text="Not set — a suggestion appears once you pick a platform below" />
-              <CheckRow label="Quality Checks" ok={qualityPassed} text={qualityPassed ? "✓ Passed" : "Needs review"} />
+              <CheckRow
+                label="Paperback — Full Cover PDF"
+                ok={paperbackEdition?.status === "ready"}
+                text={
+                  paperbackEdition?.status === "ready"
+                    ? "✓ Generated in Cover Studio"
+                    : paperbackEdition
+                      ? "Started — finish it in Cover Studio"
+                      : "Not started — generate one in Cover Studio"
+                }
+              />
+              <CheckRow
+                label="Pricing"
+                ok={hasAnyPrice}
+                text={hasAnyPrice ? "✓ Set below" : "Not set — enter a price below"}
+              />
+              <CheckRow label="Quality Checks" ok={qualityPassed} text={gate ? (qualityPassed ? "✓ Passed" : "Needs review") : "Not scored yet"} />
             </div>
             <p style={{ fontSize: "11.5px", color: "var(--muted)", margin: "-6px 0 10px" }}>
-              InkFrame&apos;s internal readiness assessment: {gate.overall_readiness_score}/100. This reflects what
-              InkFrame has checked so far — it is not a guarantee of platform acceptance.
+              InkFrame&apos;s internal readiness assessment:{" "}
+              {gate?.overallReadinessScore != null ? `${gate.overallReadinessScore}/100` : "not scored yet"}. This
+              reflects what InkFrame has checked so far — it is not a guarantee of platform acceptance.
             </p>
             <p style={{ fontSize: "11.5px", color: "var(--muted)", margin: "0 0 22px" }}>
               Paperback/hardcover cover dimensions are calculated from this book&apos;s actual trim size and final
               page count — never a generic fixed size. If the page count changes later, the cover is automatically
               flagged for recalculation before this checklist can show all-green again.
             </p>
+
+            <div className="checklist-panel" style={{ marginBottom: "22px" }}>
+              <div style={{ fontWeight: 700, marginBottom: "10px" }}>
+                Pricing
+                {priceSaveState === "saving" && (
+                  <span style={{ fontWeight: 400, fontSize: "12px", color: "var(--muted)", marginLeft: "10px" }}>Saving…</span>
+                )}
+                {priceSaveState === "saved" && (
+                  <span style={{ fontWeight: 400, fontSize: "12px", color: "#5fe3b8", marginLeft: "10px" }}>✓ Saved</span>
+                )}
+              </div>
+              {(Object.keys(FORMAT_LABELS) as FormatType[]).map((f) => (
+                <div className="check-row" key={f}>
+                  <span>{FORMAT_LABELS[f]}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                    $
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={prices[f]}
+                      onChange={(e) => setPrices((p) => ({ ...p, [f]: e.target.value }))}
+                      placeholder={suggestPrice(passport?.scope?.wordsWritten ?? 0)}
+                      style={{ width: "80px" }}
+                    />
+                  </span>
+                </div>
+              ))}
+              <p className="hint" style={{ marginTop: "8px" }}>
+                Real prices you set, saved to this book&apos;s format editions as you type. Leave a format blank
+                to fall back on InkFrame&apos;s starting suggestion when a listing is prepared below.
+              </p>
+            </div>
 
             {!approved ? (
               <div

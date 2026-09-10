@@ -1186,6 +1186,69 @@ Management, Book Previewer, Front/Back Matter Builder, collaboration
 roles) — not re-attempted here to avoid exactly the duplication these
 specs keep warning against.
 
+## KDP integration: why "Connect KDP" wasn't built, and what was fixed instead
+
+The next spec asked for a "Connect KDP" account-authorization flow, automatic
+KDP draft creation/updating, KDP status sync, and resumable background KDP
+publishing jobs — with an explicit instruction (its own section 21) to
+verify Amazon actually permits this kind of integration before assuming it
+does.
+
+Researched before writing any code, not assumed:
+
+- Amazon KDP has no official public API for creating, updating, or reading
+  book drafts. Amazon's Selling Partner API (SP-API) covers seller/catalog
+  operations on the retail side; it does not cover KDP's own draft/bookshelf
+  workflow at all.
+- Amazon's Conditions of Use prohibit automated access to its sites (bots,
+  scrapers, "any automatic device, program, algorithm") without express
+  written permission — already the basis for declining automated Amazon
+  market research earlier this session.
+- Amazon's AI-agent policy (effective March 4, 2026) goes further and
+  explicitly bans browser automation, scraping, and undocumented endpoints
+  against its properties, permitting only the documented SP-API — which, as
+  above, doesn't reach KDP drafts anyway.
+
+Net result: there is no compliant way to programmatically log into a user's
+KDP account, fill in a draft, or poll its status, without either using
+credentials InkFrame should never store/replay (bypassing KDP's own
+auth/MFA/CAPTCHA — explicitly against this project's own standing rule) or
+violating Amazon's terms outright. So "Connect KDP," automatic draft
+creation, KDP status sync, and the background KDP job queue are **declined**
+— not deferred as a future build, but ruled out on compliance grounds. This
+matches the "prepare everything, hand off for manual action" fallback the
+spec itself asked for when no supported API exists (its own section 21
+condition), and `/publish` already *is* that fallback: it prepares the
+listing fields and links straight to the real KDP bookshelf for the author
+to paste them in themselves — nothing new to build there.
+
+What the audit of `/publish` did find, and fix, while confirming the above:
+
+- **Duplicated readiness logic.** `/publish` had its own hand-rolled
+  checklist reading `quality_gate` columns directly, completely separate
+  from `computeBookHealth()` (`lib/book-passport.ts`) that `/passport` and
+  the dashboard's Tasks widget already use — the exact "two implementations
+  that can drift" pattern these specs keep flagging. `/publish` now calls
+  `assembleBookPassport()` + `computeBookHealth()` like everywhere else, so
+  there is one readiness computation in the whole app, not two.
+- **A stale claim.** The checklist unconditionally said "Paperback — Full
+  Cover PDF: Not available yet," which was true when that row was written
+  but has been false since the paperback print-cover feature shipped
+  earlier this session. It now reads the project's real `format_editions`
+  row and shows done/in-progress/not-started based on what actually
+  happened in Cover Studio. "Paperback — Interior PDF" is left honestly
+  marked unavailable — that one's still genuinely true, there is no
+  print-ready interior PDF renderer in the app.
+- **A missing real feature.** Pricing was previously only ever an
+  auto-suggested number (`suggestPrice()`, word-count based) shown inside a
+  prepared listing — never something the author could actually set.
+  `/publish` now has a real per-format (ebook/paperback/hardcover) price
+  input, debounced-autosaved to `format_editions.price` (same
+  skip-first-render-then-debounce pattern as Story Bible's autosave), and
+  the prepared-listing price uses that real value when one has been set,
+  falling back to the suggestion only when the author hasn't priced the
+  book yet.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

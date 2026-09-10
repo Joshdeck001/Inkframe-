@@ -1137,6 +1137,55 @@ every project just to show "metadata incomplete"), and `publishing_log`
 (same table `/activity` reads, just the 5 most recent rows here instead
 of the full history).
 
+## Story Bible: dormant schema, actually wired up
+
+Another large spec (mostly a superset of the two prior consolidation
+rounds) asked for a fiction Story Bible / continuity system. Audit found
+something more specific than "not built" — `story_bible` (characters,
+locations, timeline, world_rules, important_objects, secrets_reveals,
+plot_threads) has existed in the schema since the original migration, but
+nothing ever read or wrote it; `lib/writing-agent.ts`'s own doc comment
+called it out as deferred ("lands once the fuller writing-prompt specs
+are available").
+
+Building only a UI for it would have created exactly the "looks
+functional but isn't" trap these specs keep warning about — an author
+fills in characters and plot threads, and the Writing Agent silently
+ignores all of it. So this closes the loop both ways:
+
+- `/story-bible?project=` — a real editor: named-entry lists (name +
+  freeform description) for characters/locations/timeline/world rules/
+  important objects/secrets, plus a plot-threads list with an
+  open/closed toggle. Real autosave (debounced, a genuine "Saving…" /
+  "✓ Saved" indicator) — the first actual editing interface in the app,
+  so the first place autosave has ever had something real to attach to.
+- `lib/story-bible.ts` — the shared shape and a `storyBibleToPromptFacts()`
+  formatter, so the editor and the consumer can't drift into disagreeing
+  about what these jsonb blobs contain.
+- `lib/writing-agent.ts` now actually fetches `story_bible` and folds
+  non-empty sections into its prompt when drafting a chapter — known
+  characters, established locations, world rules, and open plot threads
+  only (closed threads are dropped, empty sections contribute nothing).
+  Verified with a script: an empty bible adds zero prompt lines, a
+  populated one surfaces the real facts, and a closed plot thread never
+  reaches the prompt.
+- Linked from Book Passport's action row, not a new sidebar item — this
+  spec explicitly said not to turn every capability into its own nav
+  entry, and Book Passport already is the de facto project hub.
+- Gated off for `book_type === 'Nonfiction'` — the table itself is
+  commented "(fiction only)"; a proper nonfiction Book Knowledge Base
+  (research/facts/sources/definitions) would need its own schema and
+  wasn't built this pass.
+
+Everything else in this spec was a restatement of the prior two
+consolidation rounds (Book Health Check, sidebar structure, dashboard
+Tasks/Activity, "Ask InkFrame") already implemented, or explicitly
+larger/deferred items already logged (Version History, Global Search, My
+Files, duplicate detection, AI Book Editor, Continuity Checker, Series
+Management, Book Previewer, Front/Back Matter Builder, collaboration
+roles) — not re-attempted here to avoid exactly the duplication these
+specs keep warning against.
+
 ## What's next
 
 All 15 steps of the original build plan are done. What's left is mostly

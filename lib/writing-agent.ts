@@ -3,6 +3,7 @@ import type { BlueprintStructure } from "@/lib/blueprint-schema";
 import { getPausedProjectIds } from "@/lib/production-paused";
 import { generateText, modelUsedLabel, resolvePreferredProvider } from "@/lib/ai-client";
 import { isStructuredBookType, getDesignFamily, writingGuidanceFor } from "@/lib/book-format";
+import { storyBibleToPromptFacts, type StoryBible } from "@/lib/story-bible";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -11,10 +12,11 @@ import { isStructuredBookType, getDesignFamily, writingGuidanceFor } from "@/lib
  * next pending chapter, and updates project/chapter status.
  *
  * Deliberately does ONE chapter per call — cron frequency paces overall
- * throughput instead of one long-running invocation. MVP continuity: passes
- * the tail of the previous chapter as context rather than the full DK 2.0
- * story_bible extraction pipeline (that lands once the fuller writing-prompt
- * specs are available).
+ * throughput instead of one long-running invocation. Continuity comes from
+ * two sources: the tail of the previous chapter (always available), plus
+ * the project's Story Bible (/story-bible) when the author has filled one
+ * in — characters, locations, world rules, and open plot threads, so the
+ * agent doesn't contradict established facts a few chapters back.
  */
 export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
   processed: boolean;
@@ -65,10 +67,11 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     .eq("id", nextChapter.id);
   await supabase.from("projects").update({ status: "WRITING" }).eq("id", project.id);
 
-  const [{ data: identity }, { data: audience }, { data: style }, preferredProvider] = await Promise.all([
+  const [{ data: identity }, { data: audience }, { data: style }, { data: storyBible }, preferredProvider] = await Promise.all([
     supabase.from("project_identity").select("*").eq("project_id", project.id).single(),
     supabase.from("project_audience").select("*").eq("project_id", project.id).single(),
     supabase.from("project_style").select("*").eq("project_id", project.id).single(),
+    supabase.from("story_bible").select("*").eq("project_id", project.id).maybeSingle(),
     resolvePreferredProvider(supabase, project.id),
   ]);
 
@@ -95,6 +98,8 @@ export async function runWritingAgentTick(supabase: SupabaseClient): Promise<{
     style?.pov ? `POV: ${style.pov}` : null,
     style?.pacing ? `Pacing: ${style.pacing}` : null,
     style?.additional_instructions ? `Additional instructions: ${style.additional_instructions}` : null,
+    "",
+    ...storyBibleToPromptFacts(storyBible as Partial<StoryBible> | null),
     "",
     `Chapter ${nextChapter.chapter_number}: ${nextChapter.title}`,
     `Objective: ${nextChapter.objective}`,

@@ -229,6 +229,11 @@ function PassportBody() {
       <div className="panel">
         <div style={{ fontWeight: 700, marginBottom: "10px" }}>Take Action</div>
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          {passport.bookType !== "Nonfiction" && (
+            <button className="btn btn-secondary" onClick={() => router.push(`/story-bible?project=${projectId}`)}>
+              📖 Story Bible
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={() => router.push(`/cover?project=${projectId}`)}>
             Cover Studio
           </button>

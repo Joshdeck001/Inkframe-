@@ -346,11 +346,28 @@ export default function SettingsPage() {
           </p>
 
           <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "8px" }}>Install</div>
-          <p className="hint" style={{ marginBottom: "14px" }}>
-            The extension source lives in this project&apos;s <code>/extension</code> folder — load it unpacked
-            from your browser&apos;s extensions page (Developer Mode → Load unpacked) since it isn&apos;t
-            published to a web store yet. See <code>/extension/README.md</code> for exact steps.
+          <p className="hint" style={{ marginBottom: "10px" }}>
+            Not published to a web store yet — download it below, unzip it, then load it unpacked in your
+            browser&apos;s extensions page.
           </p>
+          <a
+            className="btn btn-secondary"
+            href="/downloads/inkframescout-extension.zip"
+            download
+            style={{ display: "inline-flex", marginBottom: "10px" }}
+          >
+            ⬇ Download InkframeScout Extension
+          </a>
+          <ol className="hint" style={{ marginBottom: "14px", paddingLeft: "18px", lineHeight: 1.7 }}>
+            <li>Unzip the downloaded file — most browsers/OSes do this with one click on the download, or
+              double-click the .zip afterward.</li>
+            <li>Find the folder named <code>extension</code> inside it (it directly contains
+              <code>manifest.json</code>) — that&apos;s the one you&apos;ll select next, even if it&apos;s
+              nested inside another folder your unzip tool created.</li>
+            <li>Open <code>chrome://extensions</code> (or your browser&apos;s equivalent) and turn on
+              <b> Developer mode</b>.</li>
+            <li>Click <b>Load unpacked</b> and select that <code>extension</code> folder.</li>
+          </ol>
 
           <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "8px" }}>Connections</div>
           {connections === null && <p className="hint">Loading…</p>}

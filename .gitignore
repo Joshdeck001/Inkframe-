@@ -24,3 +24,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated at predev/prebuild time (scripts/build-extension-zip.ts) — never
+# committed, so it can never drift from the real extension/ source
+/public/downloads/

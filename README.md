@@ -318,10 +318,16 @@ Supabase project first (see `supabase/README.md`) — signing up before that
 will fail every database call. Sign up, then make yourself an admin only if
 you need `/admin`; a regular account is enough for everything below.
 
-**2. Load the extension.** There's no build step — `extension/` is already
-plain, unbundled Manifest V3 source. In Chrome (or any Chromium browser):
+**2. Load the extension.** `extension/` is plain, unbundled Manifest V3
+source — working from this repo directly, there's nothing to compile;
+select the `extension/` folder as-is. If you'd rather not clone the repo
+at all, download it straight from the running app instead: **Settings →
+Extensions → InkframeScout → Download InkframeScout Extension** (a zip
+of this exact folder, regenerated automatically at `predev`/`prebuild`
+time by `scripts/build-extension-zip.ts` — never committed, never stale).
+Either way: unzip if needed, then in Chrome (or any Chromium browser)
 `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-select the `extension/` folder. See `extension/README.md` for what's
+select the `extension` folder. See `extension/README.md` for what's
 actually in there and why it's built this way.
 
 **3. Pair them.** In InkFrame: **Settings → Extensions → InkframeScout →

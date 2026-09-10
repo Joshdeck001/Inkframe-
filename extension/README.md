@@ -79,7 +79,7 @@ extension/
   background/           Thin service worker — no persistent scanning, nothing to poll
   content/extract.js     Injected ONCE per click via chrome.scripting.executeScript,
                           never a persistent content_scripts entry
-  popup/                Connection setup, status, and the "Clip This Book" button
+  popup/                Connection setup, status, and the "Capture Evidence" button
   icons/                 Blue + black brand icons
 ```
 
@@ -91,12 +91,21 @@ a page the user hasn't just deliberately asked it to.
 
 ## Installing (not published to a web store yet)
 
-1. Open `chrome://extensions` (or your browser's equivalent).
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select this `extension/` folder.
-4. In InkFrame, go to **Settings → Extensions → InkframeScout** and click
+Easiest path — download a ready-made zip straight from InkFrame itself: **InkFrame → Settings → Extensions →
+InkframeScout → Download InkframeScout Extension**. That zip (`public/downloads/inkframescout-extension.zip`) is
+generated automatically from this exact folder every time the app builds or starts (`scripts/build-extension-zip.ts`,
+wired to `predev`/`prebuild` in `package.json`) — it's never committed, so it can never go stale relative to the
+real source below.
+
+1. Download and unzip it (browsers only ever download single files, never a folder directly — the zip is the
+   standard way around that). Find the `extension` folder inside — it directly contains `manifest.json`.
+2. Open `chrome://extensions` (or your browser's equivalent).
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select that `extension` folder — this folder, if you're working from the repo
+   directly instead.
+5. In InkFrame, go to **Settings → Extensions → InkframeScout** and click
    **Generate Connection Code**.
-5. Open the extension's popup, enter your InkFrame URL and paste the code,
+6. Open the extension's popup, enter your InkFrame URL and paste the code,
    then click **Connect**.
 
 ## Data flow

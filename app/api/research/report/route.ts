@@ -47,6 +47,7 @@ export const POST = withJsonErrors(async (request: Request) => {
       overall_assessment: report.overall_assessment,
       confidence_level: report.confidence_level,
       evidence_summary: report.evidence_summary,
+      trend_classification: report.trend_classification,
       status: "draft",
     })
     .select()

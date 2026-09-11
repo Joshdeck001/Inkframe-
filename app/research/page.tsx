@@ -54,11 +54,75 @@ type Findings = {
   coverage_matrix: { competitor: string; covered: Record<string, boolean> }[];
 };
 
-type Competitor = { id: string; title: string; author: string | null; price: number | null; rating: number | null; review_count: number | null; recurring_complaints: string | null; recurring_praise: string | null; content_gap: string | null; source_url: string | null; source_type: string; confidence: string | null };
-type Keyword = { id: string; keyword: string; demand_signal: string | null; competition_signal: string | null; source_url: string | null; source_type: string; confidence: string | null };
-type Category = { id: string; category_name: string; rationale: string | null; source_url: string | null; source_type: string; confidence: string | null };
-type Note = { id: string; research_type: string; content: string; source_type: string };
-type SavedReport = { id: string; sections: ResearchReport["sections"]; overall_assessment: string; confidence_level: string; evidence_summary: string; status: string; created_at: string };
+type Competitor = { id: string; title: string; author: string | null; price: number | null; rating: number | null; review_count: number | null; recurring_complaints: string | null; recurring_praise: string | null; content_gap: string | null; source_url: string | null; source_type: string; confidence: string | null; publication_date: string | null; checked_at: string };
+type Keyword = { id: string; keyword: string; demand_signal: string | null; competition_signal: string | null; source_url: string | null; source_type: string; confidence: string | null; checked_at: string };
+type Category = { id: string; category_name: string; rationale: string | null; source_url: string | null; source_type: string; confidence: string | null; checked_at: string };
+type Note = { id: string; research_type: string; content: string; source_type: string; source_url: string | null; created_at: string };
+
+// Source provenance (spec: "Finding -> Evidence -> Source -> URL -> Publication date -> Retrieved date")
+// rendered as one small line under a row, using only real columns already on these
+// tables — never invented. "Unknown" for whatever wasn't actually captured, per the
+// same "say Unknown, never guess" rule the rest of this app already follows.
+function SourceLine({ sourceUrl, publicationDate, retrievedAt }: { sourceUrl?: string | null; publicationDate?: string | null; retrievedAt: string }) {
+  return (
+    <div style={{ fontSize: "10.5px", color: "var(--muted)", marginTop: "4px", lineHeight: 1.5 }}>
+      {sourceUrl ? (
+        <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--blueGlow)" }}>
+          🔗 source
+        </a>
+      ) : (
+        "Source: Unknown"
+      )}
+      {" · Published: "}
+      {publicationDate ? new Date(publicationDate).toLocaleDateString() : "Unknown"}
+      {" · Retrieved: "}
+      {new Date(retrievedAt).toLocaleDateString()}
+    </div>
+  );
+}
+
+// Visible classification badge (spec section 8: OBSERVED/CALCULATED/INFERRED/
+// RECOMMENDED/USER INPUT/UNKNOWN must be shown, not hidden in a hover tooltip) —
+// classifyEvidence() already existed and was already correct, it just wasn't
+// rendered as real text anywhere. browser_clip gets its own distinct color so
+// InkframeScout-sourced evidence reads differently from general AI inference.
+const CLASSIFICATION_COLOR: Record<string, string> = {
+  OBSERVED: "#5fe3b8",
+  "USER INPUT": "#4c8bff",
+  CALCULATED: "#4c8bff",
+  INFERRED: "#ffc266",
+  RECOMMENDED: "#b7a0ff",
+  UNKNOWN: "#8d96ab",
+};
+function EvidenceBadge({ sourceType, confidence }: { sourceType: string; confidence: string | null }) {
+  const classification = classifyEvidence(sourceType, confidence);
+  const color = CLASSIFICATION_COLOR[classification] ?? "#8d96ab";
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: "1px" }}>
+      <span style={{ fontSize: "10.5px", fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.3px" }}>{classification}</span>
+      <span style={{ fontSize: "10px", color: "var(--muted)" }}>
+        {sourceType === "browser_clip" ? "InkframeScout" : sourceType.replace("_", " ")}
+      </span>
+    </span>
+  );
+}
+type SavedReport = { id: string; sections: ResearchReport["sections"]; overall_assessment: string; confidence_level: string; evidence_summary: string; trend_classification: string | null; status: string; created_at: string };
+const TREND_CLASSIFICATION_LABEL: Record<string, string> = {
+  EMERGING: "📈 Emerging",
+  GROWING: "📈 Growing",
+  ESTABLISHED: "📊 Established",
+  DECLINING: "📉 Declining",
+  UNCLEAR: "❓ Unclear",
+  INSUFFICIENT_EVIDENCE: "❓ Insufficient Evidence",
+};
+const TREND_CLASSIFICATION_COLOR: Record<string, string> = {
+  EMERGING: "#5fe3b8",
+  GROWING: "#5fe3b8",
+  ESTABLISHED: "#4c8bff",
+  DECLINING: "var(--red)",
+  UNCLEAR: "#ffc266",
+  INSUFFICIENT_EVIDENCE: "#8d96ab",
+};
 
 const MODE_LABELS: Record<string, string> = {
   book_opportunity: "Book Opportunity",
@@ -104,17 +168,25 @@ const SECTION_LABEL: Record<keyof ResearchReport["sections"], string> = {
   final_recommendation: "Final Recommendation",
 };
 
-function StageList({ stages }: { stages: Stage[] }) {
+function StageList({ stages, active }: { stages: Stage[]; active?: boolean }) {
+  // The first stage that isn't "passed" is exactly the one runResearchDepartmentTick
+  // (lib/research-department.ts) will pick up next — a real, accurate "in progress
+  // now" indicator computed from the same data the backend uses, not a guess or a
+  // separate status this UI has to keep in sync.
+  const activeIndex = active ? stages.findIndex((s) => s.status !== "passed") : -1;
   return (
     <div className="checklist-panel">
-      {stages.map((s) => (
-        <div className="check-row" key={s.key}>
-          <span>{s.label}</span>
-          <span style={{ color: s.status === "passed" ? "#5fe3b8" : s.status === "failed" || s.status === "blocked" ? "var(--red)" : "var(--muted)" }}>
-            {s.status === "passed" ? "✓ done" : s.status === "failed" ? "✗ failed" : s.status === "blocked" ? "⚠ blocked" : "…pending"}
-          </span>
-        </div>
-      ))}
+      {stages.map((s, i) => {
+        const isActive = i === activeIndex && s.status === "pending";
+        return (
+          <div className="check-row" key={s.key}>
+            <span>{s.label}</span>
+            <span style={{ color: s.status === "passed" ? "#5fe3b8" : s.status === "failed" || s.status === "blocked" ? "var(--red)" : isActive ? "var(--blueGlow)" : "var(--muted)" }}>
+              {s.status === "passed" ? "✓ done" : s.status === "failed" ? "✗ failed" : s.status === "blocked" ? "⚠ blocked" : isActive ? "● in progress" : "○ pending"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -253,14 +325,17 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                     {c.recurring_complaints && <div>⚠ {c.recurring_complaints}</div>}
                     {c.recurring_praise && <div>👍 {c.recurring_praise}</div>}
                   </td>
-                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(c.source_type, c.confidence)}>{c.source_type.replace("_", " ")}</span></td>
+                  <td>
+                    <EvidenceBadge sourceType={c.source_type} confidence={c.confidence} />
+                    <SourceLine sourceUrl={c.source_url} publicationDate={c.publication_date} retrievedAt={c.checked_at} />
+                  </td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("competitor_research", c.id)}>✕</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <form onSubmit={addCompetitor} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+        <form onSubmit={addCompetitor} className="evidence-add-grid">
           <input placeholder="Book title *" value={newCompetitor.title} onChange={(e) => setNewCompetitor({ ...newCompetitor, title: e.target.value })} />
           <input placeholder="Author" value={newCompetitor.author} onChange={(e) => setNewCompetitor({ ...newCompetitor, author: e.target.value })} />
           <input placeholder="Price" value={newCompetitor.price} onChange={(e) => setNewCompetitor({ ...newCompetitor, price: e.target.value })} />
@@ -289,14 +364,17 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                   <td>{k.keyword}</td>
                   <td>{k.demand_signal || "DATA NOT AVAILABLE"}</td>
                   <td>{k.competition_signal || "DATA NOT AVAILABLE"}</td>
-                  <td><span className={`badge ${k.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(k.source_type, k.confidence)}>{k.source_type.replace("_", " ")}</span></td>
+                  <td>
+                    <EvidenceBadge sourceType={k.source_type} confidence={k.confidence} />
+                    <SourceLine sourceUrl={k.source_url} retrievedAt={k.checked_at} />
+                  </td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("keyword_research", k.id)}>✕</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <form onSubmit={addKeyword} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+        <form onSubmit={addKeyword} className="evidence-add-grid">
           <input placeholder="Keyword *" value={newKeyword.keyword} onChange={(e) => setNewKeyword({ ...newKeyword, keyword: e.target.value })} />
           <input placeholder="Source URL" value={newKeyword.source_url} onChange={(e) => setNewKeyword({ ...newKeyword, source_url: e.target.value })} />
           <input placeholder="Demand signal (what you observed)" value={newKeyword.demand_signal} onChange={(e) => setNewKeyword({ ...newKeyword, demand_signal: e.target.value })} />
@@ -319,14 +397,17 @@ function EvidenceTables({ scopeColumn, scopeId, refreshKey }: { scopeColumn: "se
                 <tr key={c.id}>
                   <td>{c.category_name}</td>
                   <td style={{ fontSize: "12px" }}>{c.rationale || "—"}</td>
-                  <td><span className={`badge ${c.source_type === "user_provided" ? "active" : "user"}`} title={classifyEvidence(c.source_type, c.confidence)}>{c.source_type.replace("_", " ")}</span></td>
+                  <td>
+                    <EvidenceBadge sourceType={c.source_type} confidence={c.confidence} />
+                    <SourceLine sourceUrl={c.source_url} retrievedAt={c.checked_at} />
+                  </td>
                   <td><button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={() => removeRow("category_research", c.id)}>✕</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <form onSubmit={addCategory} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+        <form onSubmit={addCategory} className="evidence-add-grid">
           <input placeholder="Category name *" value={newCategory.category_name} onChange={(e) => setNewCategory({ ...newCategory, category_name: e.target.value })} />
           <input placeholder="Source URL" value={newCategory.source_url} onChange={(e) => setNewCategory({ ...newCategory, source_url: e.target.value })} />
           <input placeholder="Why it fits / competition notes" value={newCategory.rationale} onChange={(e) => setNewCategory({ ...newCategory, rationale: e.target.value })} style={{ gridColumn: "1 / -1" }} />
@@ -386,6 +467,14 @@ function ReportsPanel({ generateBody, reports, onGenerated, onStatusChange }: {
             <div style={{ fontWeight: 700 }}>{ASSESSMENT_LABEL[r.overall_assessment] ?? r.overall_assessment}</div>
             <span className="badge user">{r.status.replace(/_/g, " ")}</span>
           </div>
+          {r.trend_classification && (
+            <div className="check-row">
+              <span>Trend Classification</span>
+              <span style={{ fontWeight: 700, color: TREND_CLASSIFICATION_COLOR[r.trend_classification] ?? "var(--muted)" }}>
+                {TREND_CLASSIFICATION_LABEL[r.trend_classification] ?? r.trend_classification}
+              </span>
+            </div>
+          )}
           <div className="check-row"><span>Confidence</span><span>{r.confidence_level.replace(/_/g, " ")}</span></div>
           <p className="hint" style={{ margin: "10px 0" }}>{r.evidence_summary}</p>
           <div style={{ maxHeight: "320px", overflowY: "auto", marginTop: "10px" }}>
@@ -517,7 +606,7 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
       supabase.from("research_sessions").select("*").eq("id", sessionId).maybeSingle(),
       supabase.from("research_findings").select("*").eq("session_id", sessionId).maybeSingle(),
       supabase.from("research_reports").select("*").eq("session_id", sessionId).order("created_at", { ascending: false }),
-      supabase.from("research_notes").select("id, research_type, content, source_type").eq("session_id", sessionId).order("created_at", { ascending: false }),
+      supabase.from("research_notes").select("id, research_type, content, source_type, source_url, created_at").eq("session_id", sessionId).order("created_at", { ascending: false }),
     ]);
     setSession(s as SessionRow);
     setFindings((f as Findings) ?? null);
@@ -609,14 +698,16 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
       {(session.status === "queued" || session.status === "running") && (
         <div className="panel">
           <div style={{ fontWeight: 700, marginBottom: "10px" }}>Researching…</div>
-          <StageList stages={session.stages} />
+          <StageList stages={session.stages} active={session.status === "running"} />
           <p className="hint">Running in the background — you can leave this page and come back later.</p>
         </div>
       )}
 
-      {session.status === "needs_attention" && (
+      {(session.status === "needs_attention" || session.status === "failed" || session.status === "cancelled") && (
         <div className="panel">
-          <p style={{ color: "var(--red)", fontSize: "13px", marginBottom: "10px" }}>{session.error || "Research needs attention."}</p>
+          <p style={{ color: "var(--red)", fontSize: "13px", marginBottom: "10px" }}>
+            {session.error || (session.status === "cancelled" ? "This research session was cancelled." : "Research needs attention.")}
+          </p>
           <StageList stages={session.stages} />
           <button
             className="btn btn-primary"
@@ -788,9 +879,19 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
         <div style={{ fontWeight: 700, marginBottom: "10px" }}>Sources ({webSources.length})</div>
         {webSources.length === 0 && <p className="hint">No live sources collected — see the safety note above for why.</p>}
         <div style={{ maxHeight: "220px", overflowY: "auto" }}>
-          {webSources.map((n) => (
-            <p key={n.id} style={{ fontSize: "12px", color: "var(--muted)", whiteSpace: "pre-wrap", marginBottom: "10px" }}>{n.content}</p>
-          ))}
+          {webSources.map((n) => {
+            // content is stored as "title\nurl\nsnippet" (the url line is kept for the
+            // extraction stage's own text parsing) — dropped here for display only,
+            // since SourceLine below already renders it as a real clickable link.
+            const lines = n.content.split("\n");
+            const displayContent = n.source_url && lines[1] === n.source_url ? [lines[0], ...lines.slice(2)].join("\n") : n.content;
+            return (
+              <div key={n.id} style={{ marginBottom: "12px" }}>
+                <p style={{ fontSize: "12px", color: "var(--muted)", whiteSpace: "pre-wrap" }}>{displayContent}</p>
+                <SourceLine sourceUrl={n.source_url} retrievedAt={n.created_at} />
+              </div>
+            );
+          })}
         </div>
       </div>
 

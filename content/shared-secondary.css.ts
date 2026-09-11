@@ -92,5 +92,11 @@ table.admin-table th { text-align:left; color:var(--muted); font-size:11px; text
   letter-spacing:.03em; padding:8px 10px; border-bottom:1px solid var(--border); }
 table.admin-table td { padding:10px; border-bottom:1px solid var(--border); vertical-align:top; }
 
-@media (max-width:640px) { .wrap { padding:24px 16px 40px; } }
+.evidence-add-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+@media (max-width:640px) {
+  .wrap { padding:24px 16px 40px; }
+  .evidence-add-grid { grid-template-columns:1fr; }
+  table.admin-table td, table.admin-table th { padding:8px 6px; font-size:12px; }
+}
 `;

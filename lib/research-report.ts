@@ -4,6 +4,14 @@ import { searchWeb } from "@/lib/web-research-client";
 
 const ASSESSMENTS = ["very_promising", "promising", "moderate", "high_competition", "difficult", "insufficient_data"] as const;
 const CONFIDENCE = ["low", "medium", "high", "insufficient_data"] as const;
+// Structured trend classification (spec: "Trend Research" section) — a real,
+// justified label distinct from the free-text trend_signals prose, so a
+// trend_research session gets an honest EMERGING/GROWING/etc. verdict instead
+// of only a paragraph. Null for every other mode; never guessed when evidence
+// is thin — INSUFFICIENT_EVIDENCE exists specifically so the model has an
+// honest option instead of picking a direction it can't support.
+export const TREND_CLASSIFICATIONS = ["EMERGING", "GROWING", "ESTABLISHED", "DECLINING", "UNCLEAR", "INSUFFICIENT_EVIDENCE"] as const;
+export type TrendClassification = (typeof TREND_CLASSIFICATIONS)[number];
 
 export type ResearchReportSections = {
   executive_summary: string;
@@ -38,6 +46,7 @@ export type ResearchReport = {
   overall_assessment: (typeof ASSESSMENTS)[number];
   confidence_level: (typeof CONFIDENCE)[number];
   evidence_summary: string;
+  trend_classification: TrendClassification | null;
 };
 
 const REPORT_TOOL: ToolSpec = {
@@ -112,6 +121,12 @@ const REPORT_TOOL: ToolSpec = {
       },
       confidence_level: { type: "string", enum: [...CONFIDENCE] },
       evidence_summary: { type: "string", description: "Plainly state how much real evidence (competitor/keyword/category rows, live search results, computed frequency/gap/opportunity data) was actually available versus how much of this report is AI synthesis." },
+      trend_classification: {
+        type: ["string", "null"],
+        enum: [...TREND_CLASSIFICATIONS],
+        description:
+          "ONLY set this (non-null) when the research mode given below is 'trend_research'. Must be honestly justified by trend_signals and the evidence given — use INSUFFICIENT_EVIDENCE rather than guessing a direction, and UNCLEAR when signals conflict. For every other mode, this must be null.",
+      },
     },
     required: ["sections", "overall_assessment", "confidence_level", "evidence_summary"],
   },

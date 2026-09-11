@@ -482,7 +482,11 @@ export default function DashboardPage() {
 
   async function addSuggestionFollowUp(sessionId: string, text: string) {
     if (!text.trim()) return;
-    await supabase.from("research_notes").insert({ session_id: sessionId, research_type: "user_note", content: text.trim(), source_type: "user_provided" });
+    const { error } = await supabase.from("research_notes").insert({ session_id: sessionId, research_type: "user_note", content: text.trim(), source_type: "user_provided" });
+    if (error) {
+      setSuggestionError(`Could not save that note: ${error.message}`);
+      return;
+    }
     router.push(`/research?session=${sessionId}`);
   }
 

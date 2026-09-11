@@ -59,11 +59,11 @@ export async function runDiscoveryStage(supabase: SupabaseClient, session: Resea
     : ["promising self-publishing book niches 2026"];
 
   let collected = 0;
+  let insertFailures = 0;
   for (const q of queries) {
     const result = await searchWeb(q);
     if (result.available) {
-      collected += result.results.length;
-      await supabase.from("research_notes").insert(
+      const { error } = await supabase.from("research_notes").insert(
         result.results.map((r) => ({
           session_id: session.id,
           research_type: "web_search",
@@ -72,15 +72,34 @@ export async function runDiscoveryStage(supabase: SupabaseClient, session: Resea
           confidence: "medium" as const,
         }))
       );
+      // Only count results actually saved — a constraint violation or any other
+      // insert failure must never be reported as "collected" (that previously
+      // happened silently here: research_notes.research_type's CHECK constraint
+      // didn't allow 'web_search' until migration 0027, so every one of these
+      // inserts was rejected and discarded without anyone knowing).
+      if (error) {
+        insertFailures++;
+        console.error(`runDiscoveryStage: failed to save web_search notes for session ${session.id}:`, error.message);
+      } else {
+        collected += result.results.length;
+      }
     } else {
-      await supabase.from("research_notes").insert({
+      const { error } = await supabase.from("research_notes").insert({
         session_id: session.id,
         research_type: "web_search",
         content: `Web search for "${q}" was not available: ${result.reason}`,
         source_type: "ai_inference" as const,
         confidence: "insufficient_data" as const,
       });
+      if (error) {
+        insertFailures++;
+        console.error(`runDiscoveryStage: failed to save unavailability note for session ${session.id}:`, error.message);
+      }
     }
+  }
+
+  if (insertFailures > 0 && collected === 0) {
+    throw new Error(`Discovery stage ran but could not save ${insertFailures} note(s) to the database — check server logs for the underlying error.`);
   }
 
   return { detail: collected > 0 ? `${collected} web result(s) collected across ${queries.length} search(es).` : "No live web results — search provider unavailable, proceeding on user-provided evidence only." };

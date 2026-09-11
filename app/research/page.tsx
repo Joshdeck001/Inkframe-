@@ -510,6 +510,7 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
   const [creatingProjectFor, setCreatingProjectFor] = useState<number | null>(null);
   const [bookType, setBookType] = useState("Fiction");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   async function load() {
     const [{ data: s }, { data: f }, { data: r }, { data: n }] = await Promise.all([
@@ -540,7 +541,12 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
 
   async function addNote() {
     if (!newNote.trim()) return;
-    await supabase.from("research_notes").insert({ session_id: sessionId, research_type: "user_note", content: newNote.trim(), source_type: "user_provided" });
+    setNoteError(null);
+    const { error } = await supabase.from("research_notes").insert({ session_id: sessionId, research_type: "user_note", content: newNote.trim(), source_type: "user_provided" });
+    if (error) {
+      setNoteError(`Could not save that note: ${error.message}`);
+      return;
+    }
     setNewNote("");
     await load();
   }
@@ -801,6 +807,7 @@ function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () =>
           <input placeholder="Add a note…" value={newNote} onChange={(e) => setNewNote(e.target.value)} style={{ flex: 1 }} />
           <button className="btn btn-secondary" onClick={addNote}>+ Add</button>
         </div>
+        {noteError && <p style={{ color: "var(--red)", fontSize: "13px", marginTop: "8px" }}>{noteError}</p>}
       </div>
 
       <EvidenceTables scopeColumn="session_id" scopeId={sessionId} refreshKey={evidenceRefresh} />
@@ -914,6 +921,7 @@ function NotesList({ scopeColumn, scopeId }: { scopeColumn: "opportunity_id" | "
   const supabase = createClient();
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [newNote, setNewNote] = useState("");
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   async function load() {
     const { data } = await supabase.from("research_notes").select("id, content").eq(scopeColumn, scopeId).order("created_at", { ascending: false });
@@ -928,7 +936,12 @@ function NotesList({ scopeColumn, scopeId }: { scopeColumn: "opportunity_id" | "
 
   async function addNote() {
     if (!newNote.trim()) return;
-    await supabase.from("research_notes").insert({ [scopeColumn]: scopeId, research_type: "user_note", content: newNote.trim(), source_type: "user_provided" });
+    setNoteError(null);
+    const { error } = await supabase.from("research_notes").insert({ [scopeColumn]: scopeId, research_type: "user_note", content: newNote.trim(), source_type: "user_provided" });
+    if (error) {
+      setNoteError(`Could not save that note: ${error.message}`);
+      return;
+    }
     setNewNote("");
     await load();
   }
@@ -949,6 +962,7 @@ function NotesList({ scopeColumn, scopeId }: { scopeColumn: "opportunity_id" | "
         <input placeholder="Add a note…" value={newNote} onChange={(e) => setNewNote(e.target.value)} style={{ flex: 1, fontSize: "12px" }} />
         <button className="btn btn-secondary" style={{ padding: "4px 10px" }} onClick={addNote}>+ Add</button>
       </div>
+      {noteError && <p style={{ color: "var(--red)", fontSize: "11.5px", marginTop: "6px" }}>{noteError}</p>}
     </div>
   );
 }

@@ -956,6 +956,13 @@ type ScoutSnapshot = { id: string; label: string };
 type CompetitionSet = { id: string; label: string };
 type CompetitionSetClipRow = { competition_set_id: string; clip_id: string };
 type WatchedBook = { id: string; isbn: string | null; marketplace: string | null; external_id: string | null; title: string | null; author: string | null };
+type BookSnapshot = { topic: string; audience: string; format: string | null; series_info: string | null };
+type OpportunityIdea = { category: string; title: string; why_it_exists: string; evidence_supporting: string[]; what_would_differ: string; evidence_gaps: string[] };
+type BookConcept = {
+  concept: string; target_reader: string; reader_problem: string; differentiation: string; title_direction: string; subtitle_direction: string;
+  content_angle: string; structure: string; competitive_advantage: string; evidence_supporting: string[]; evidence_gaps: string[]; risks: string[];
+  confidence: string; status: "proposed" | "accepted" | "rejected";
+};
 type ScoutOpportunity = {
   id: string;
   title: string;
@@ -963,12 +970,23 @@ type ScoutOpportunity = {
   competition_set_id: string | null;
   session_id: string | null;
   project_id: string | null;
+  source_clip_id: string | null;
   score: OpportunitySignals | null;
   potential_audience: string | null;
   potential_positioning: string | null;
   potential_differentiation: string | null;
   risks: string | null;
   status: string;
+  book_snapshot: BookSnapshot | null;
+  whats_working: string[];
+  whats_missing: string[];
+  opportunity_ideas: OpportunityIdea[];
+  concepts: BookConcept[];
+};
+
+const OPPORTUNITY_CATEGORY_LABEL: Record<string, string> = {
+  remodel: "🔄 Remodel", gap: "🕳 Gap", audience: "👥 Audience", depth: "🔬 Depth", practical: "🛠 Practical",
+  updated: "🆕 Updated", series: "📚 Series", combination: "➕ Combination", beginner_advanced: "🎚 Beginner/Advanced", regional_platform: "🌐 Regional/Platform",
 };
 
 function platformLabel(marketplace: string): string {
@@ -1181,6 +1199,233 @@ function EvidenceSummary({ clip }: { clip: ScoutClip }) {
   );
 }
 
+/**
+ * Turns one captured clip into a real Book Intelligence Workspace: what
+ * the evidence suggests works, what may be missing, typed original
+ * opportunity ideas, and — approved one at a time — concrete book
+ * concepts a project can be created from. No fabricated sales/royalty
+ * estimate, no opaque single-number score, anywhere in this component;
+ * every AI-generated field here is explicitly framed as inference.
+ */
+function BookIntelligenceWorkspace({ clip }: { clip: ScoutClip }) {
+  const router = useRouter();
+  const supabase = createClient();
+  const [opportunity, setOpportunity] = useState<ScoutOpportunity | null | undefined>(undefined);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [generatingConcepts, setGeneratingConcepts] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bookType, setBookType] = useState("Nonfiction");
+  const [creatingProjectFor, setCreatingProjectFor] = useState<number | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  async function load() {
+    const { data } = await supabase.from("scout_opportunities").select("*").eq("source_clip_id", clip.id).maybeSingle();
+    setOpportunity((data as ScoutOpportunity) ?? null);
+  }
+  useEffect(() => {
+    (async () => {
+      await load();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip.id]);
+
+  async function analyze() {
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/inkframescout/book-intelligence/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clip_id: clip.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not analyze this book.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not analyze this book.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function generateConcepts() {
+    if (!opportunity) return;
+    setGeneratingConcepts(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/inkframescout/book-intelligence/concepts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunity_id: opportunity.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not generate concepts.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not generate concepts.");
+    } finally {
+      setGeneratingConcepts(false);
+    }
+  }
+
+  async function setConceptStatus(index: number, status: "accepted" | "rejected") {
+    if (!opportunity) return;
+    const concepts = opportunity.concepts.map((c, i) => (i === index ? { ...c, status } : c));
+    await supabase.from("scout_opportunities").update({ concepts }).eq("id", opportunity.id);
+    await load();
+  }
+
+  async function createProject(index: number) {
+    if (!opportunity) return;
+    setCreatingProjectFor(index);
+    setCreateError(null);
+    try {
+      const res = await fetch("/api/research/create-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunity_id: opportunity.id, concept_index: index, book_type: bookType }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Could not create project.");
+      router.push(`/wizard?project=${json.project_id}`);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "Could not create project.");
+    } finally {
+      setCreatingProjectFor(null);
+    }
+  }
+
+  if (opportunity === undefined) return <p className="hint" style={{ marginTop: "8px" }}>Loading…</p>;
+
+  return (
+    <div className="panel" style={{ marginTop: "10px", background: "rgba(76,139,255,.05)", border: "1px solid rgba(76,139,255,.2)" }}>
+      <div style={{ fontWeight: 700, marginBottom: "6px" }}>📘 Book Intelligence Workspace</div>
+      {!opportunity && (
+        <>
+          <p className="hint" style={{ marginBottom: "10px" }}>
+            Turn this one captured book into real analysis — what the evidence suggests is working, what may be
+            missing, and original (non-cloning) opportunities grounded in the same reader problem.
+          </p>
+          <button className="btn btn-primary" onClick={analyze} disabled={analyzing}>{analyzing ? "Analyzing…" : "Analyze Book"}</button>
+        </>
+      )}
+
+      {opportunity && (
+        <>
+          {opportunity.book_snapshot && (
+            <div style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Book Snapshot</div>
+              <p style={{ fontSize: "13px", marginTop: "4px" }}>
+                <strong>Topic:</strong> {opportunity.book_snapshot.topic}<br />
+                <strong>Audience:</strong> {opportunity.book_snapshot.audience}<br />
+                {opportunity.book_snapshot.format && <><strong>Format:</strong> {opportunity.book_snapshot.format}<br /></>}
+                {opportunity.book_snapshot.series_info && <><strong>Series:</strong> {opportunity.book_snapshot.series_info}<br /></>}
+                <strong>Price:</strong> {clip.price != null ? `$${clip.price}` : "Unknown"} ·{" "}
+                <strong>Category:</strong> {clip.category ?? "Unknown"} ·{" "}
+                <strong>Rating:</strong> {clip.rating != null ? `${clip.rating}★ (${clip.review_count ?? "?"} reviews)` : "Unknown"} ·{" "}
+                <strong>Rank:</strong> {clip.bsr != null ? `#${clip.bsr.toLocaleString()}` : "Not captured"} ·{" "}
+                <strong>Published:</strong> {clip.published_date ?? "Unknown"}
+              </p>
+            </div>
+          )}
+
+          {opportunity.whats_working.length > 0 && (
+            <div style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#5fe3b8", textTransform: "uppercase" }}>What&apos;s Working (inferred)</div>
+              <ul style={{ fontSize: "13px", marginTop: "4px", paddingLeft: "18px" }}>
+                {opportunity.whats_working.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {opportunity.whats_missing.length > 0 && (
+            <div style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#ffc266", textTransform: "uppercase" }}>What May Be Missing (inferred)</div>
+              <ul style={{ fontSize: "13px", marginTop: "4px", paddingLeft: "18px" }}>
+                {opportunity.whats_missing.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {opportunity.opportunity_ideas.length > 0 && (
+            <div style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Opportunity Discovery</div>
+              {opportunity.opportunity_ideas.map((idea, i) => (
+                <div key={i} className="checklist-panel" style={{ marginTop: "6px", padding: "8px" }}>
+                  <div style={{ fontWeight: 600, fontSize: "13px" }}>{OPPORTUNITY_CATEGORY_LABEL[idea.category] ?? idea.category} — {idea.title}</div>
+                  <p style={{ fontSize: "12.5px", marginTop: "4px" }}>{idea.why_it_exists}</p>
+                  <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "4px" }}><strong>What would differ:</strong> {idea.what_would_differ}</p>
+                  {idea.evidence_supporting.length > 0 && (
+                    <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "4px" }}><strong>Evidence:</strong> {idea.evidence_supporting.join("; ")}</p>
+                  )}
+                  {idea.evidence_gaps.length > 0 && (
+                    <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "2px" }}><strong>Evidence gaps:</strong> {idea.evidence_gaps.join("; ")}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+            <button className="btn btn-primary" onClick={generateConcepts} disabled={generatingConcepts}>
+              {generatingConcepts ? "Generating…" : "Generate Original Concepts"}
+            </button>
+            <button className="btn btn-secondary" onClick={analyze} disabled={analyzing}>{analyzing ? "Re-analyzing…" : "Re-analyze Book"}</button>
+          </div>
+
+          {opportunity.concepts.length > 0 && (
+            <div>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", marginBottom: "6px" }}>Original Concepts</div>
+              {opportunity.concepts.map((c, i) => (
+                <div key={i} className="checklist-panel" style={{ marginBottom: "10px", padding: "10px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 600, fontSize: "13px" }}>{c.concept}</div>
+                    <span className={`badge ${c.status === "accepted" ? "active" : "user"}`}>{c.status}</span>
+                  </div>
+                  <p style={{ fontSize: "12.5px", marginTop: "6px" }}><strong>Target reader:</strong> {c.target_reader}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Reader problem:</strong> {c.reader_problem}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Differentiation:</strong> {c.differentiation}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Title direction:</strong> {c.title_direction}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Subtitle direction:</strong> {c.subtitle_direction}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Content angle:</strong> {c.content_angle}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Structure:</strong> {c.structure}</p>
+                  <p style={{ fontSize: "12.5px", marginTop: "2px" }}><strong>Competitive advantage:</strong> {c.competitive_advantage}</p>
+                  {c.evidence_supporting.length > 0 && <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "4px" }}><strong>Evidence:</strong> {c.evidence_supporting.join("; ")}</p>}
+                  {c.evidence_gaps.length > 0 && <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "2px" }}><strong>Evidence gaps:</strong> {c.evidence_gaps.join("; ")}</p>}
+                  {c.risks.length > 0 && <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "2px" }}><strong>Risks:</strong> {c.risks.join("; ")}</p>}
+                  <p style={{ fontSize: "11.5px", color: "var(--muted)", marginTop: "2px" }}><strong>Confidence:</strong> {c.confidence}</p>
+
+                  {c.status === "proposed" && (
+                    <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                      <button className="btn btn-secondary" onClick={() => setConceptStatus(i, "accepted")}>Approve</button>
+                      <button className="btn btn-secondary" onClick={() => setConceptStatus(i, "rejected")}>Reject</button>
+                    </div>
+                  )}
+                  {c.status === "accepted" && (
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px", flexWrap: "wrap" }}>
+                      <select value={bookType} onChange={(e) => setBookType(e.target.value)}>
+                        {["Fiction", "Nonfiction", "Biography", "Memoir", "Self-help", "Educational", "Technical/Professional", "Children's", "Serial Fiction", "Other"].map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <button className="btn btn-primary" onClick={() => createProject(i)} disabled={creatingProjectFor === i || !!opportunity.project_id}>
+                        {opportunity.project_id ? "Project Created" : creatingProjectFor === i ? "Creating…" : "Create Book Project"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {createError && <p style={{ color: "var(--red)", fontSize: "13px" }}>{createError}</p>}
+            </div>
+          )}
+        </>
+      )}
+
+      {error && <p style={{ color: "var(--red)", fontSize: "13px", marginTop: "8px" }}>{error}</p>}
+    </div>
+  );
+}
+
 function MyClipsPanel({
   clips,
   sessions,
@@ -1200,6 +1445,7 @@ function MyClipsPanel({
 }) {
   const supabase = createClient();
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [expandedClipId, setExpandedClipId] = useState<string | null>(null);
 
   async function assign(clip: ScoutClip, sessionId: string) {
     setAssigning(clip.id);
@@ -1300,8 +1546,12 @@ function MyClipsPanel({
                   {findWatch(clip) ? "★ Watching" : "☆ Watch"}
                 </button>
                 <button className="btn btn-secondary" onClick={() => discard(clip.id)}>Discard</button>
+                <button className="btn btn-secondary" onClick={() => setExpandedClipId((id) => (id === clip.id ? null : clip.id))}>
+                  {expandedClipId === clip.id ? "▲ Hide Book Intelligence" : "📘 Analyze Book"}
+                </button>
               </div>
               <EvidenceSummary clip={clip} />
+              {expandedClipId === clip.id && <BookIntelligenceWorkspace clip={clip} />}
             </div>
           ))}
         </div>

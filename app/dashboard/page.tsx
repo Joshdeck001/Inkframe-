@@ -449,11 +449,20 @@ export default function DashboardPage() {
     setSuggestionLoading(true);
     setSuggestionError(null);
     setSuggestionReport(null);
+    // The server route now only does one fast AI classification call plus an insert
+    // before responding (see app/api/suggestion-bar/query/route.ts) — the real research
+    // work runs in the background after that. This client-side abort is a second,
+    // independent safety net so "Thinking…" can never hang indefinitely even if the
+    // network stalls or the server takes unexpectedly long: the request is cancelled
+    // and a real error shown instead of leaving the UI stuck.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const res = await fetch("/api/suggestion-bar/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: q }),
+        signal: controller.signal,
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Could not process that request.");
@@ -463,8 +472,10 @@ export default function DashboardPage() {
       }
       setSuggestionSession({ id: json.session_id, topic: json.topic, mode: json.mode, stages: [], status: "running", error: null });
     } catch (e) {
-      setSuggestionError(e instanceof Error ? e.message : "Could not process that request.");
+      const message = e instanceof Error && e.name === "AbortError" ? "That took too long to respond — try again." : e instanceof Error ? e.message : "Could not process that request.";
+      setSuggestionError(message);
     } finally {
+      clearTimeout(timeout);
       setSuggestionLoading(false);
     }
   }
@@ -922,6 +933,32 @@ export default function DashboardPage() {
           </header>
 
           <div className="content">
+            {suggestionError && !suggestionSession && (
+              <div
+                style={{
+                  marginBottom: "16px",
+                  padding: "12px 14px",
+                  borderRadius: "10px",
+                  background: "rgba(226,59,76,.08)",
+                  border: "1px solid rgba(226,59,76,.3)",
+                  color: "var(--red, #e2536b)",
+                  fontSize: "13px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                }}
+              >
+                <span>{suggestionError}</span>
+                <button
+                  className="open-btn"
+                  style={{ width: "auto", flexShrink: 0, padding: "6px 12px" }}
+                  onClick={() => setSuggestionError(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {suggestionSession && (
               <SuggestionBarResults
                 session={suggestionSession}

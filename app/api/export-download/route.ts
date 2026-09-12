@@ -24,11 +24,15 @@ export const GET = withJsonErrors(async (request: Request) => {
   const { user, error: authError, status: authStatus } = await requireApprovedUser(supabase);
   if (!user) return NextResponse.json({ error: authError }, { status: authStatus });
 
+  // "needs_attention" builds still produced real files (see lib/formatting-
+  // department.ts) — a real document-structure issue was found and flagged
+  // in Book Health, but the file itself genuinely exists and is downloadable
+  // so the author (or support) can see exactly what it looks like.
   const { data: job } = await supabase
     .from("formatting_jobs")
     .select("output_files, status")
     .eq("project_id", projectId)
-    .eq("status", "complete")
+    .in("status", ["complete", "needs_attention"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

@@ -61,6 +61,8 @@ export type PreflightResult = {
 
 const BOOK_LEVEL_LABELS = new Set([
   "Manuscript (all chapters approved)",
+  "Document structure (chapters, front/back matter, no duplicates)",
+  "Author name set",
   "Metadata",
   "Quality gate scored",
   "Rights confirmed",

@@ -9,7 +9,14 @@
  * author's own manuscript with no easy way to notice.
  */
 
+import { sanitizeManuscriptText } from "@/lib/text-sanitize";
+
 export type ImportedChapter = { title: string; content: string };
+
+/** Every chapter-producing path runs through this before returning — the one point manuscript text is sanitized at ingestion (see lib/text-sanitize.ts for what this does and doesn't touch). */
+function sanitizeChapters(chapters: ImportedChapter[]): ImportedChapter[] {
+  return chapters.map((c) => ({ title: sanitizeManuscriptText(c.title), content: sanitizeManuscriptText(c.content) }));
+}
 
 function stripTags(html: string): string {
   return html
@@ -110,7 +117,7 @@ export function splitIntoChapters(html: string, fallbackTitle: string): Imported
     const content = chapterHtmlToMarkdown(html.slice(sectionStart, sectionEnd));
     if (content) chapters.push({ title: marks[i].title, content });
   }
-  return chapters;
+  return sanitizeChapters(chapters);
 }
 
 export function wordCount(text: string): number {
@@ -177,7 +184,11 @@ function matchHeadingLine(line: string): HeadingMatch | null {
   if (!t || t.length > 90) return null;
   if (/^(chapter|ch\.?)\s+([a-z0-9][a-z0-9\s-]*)/i.test(t)) return { title: t.replace(/\s+/g, " ") };
   if (/^part\s+([a-z0-9][a-z0-9\s-]*)/i.test(t)) return { title: t.replace(/\s+/g, " ") };
-  if (/^(prologue|epilogue|introduction|foreword|preface|afterword|acknowledgments|acknowledgements|dedication|epigraph|author'?s?\s+note|about\s+the\s+author)\s*$/i.test(t))
+  if (
+    /^(prologue|epilogue|introduction|foreword|preface|afterword|acknowledgments|acknowledgements|dedication|epigraph|author'?s?\s+note|about\s+the\s+author|conclusion|final\s+thoughts|closing\s+thoughts)\s*$/i.test(
+      t
+    )
+  )
     return { title: t.replace(/\s+/g, " ") };
   return null;
 }
@@ -237,7 +248,7 @@ export function detectChaptersFromPlainText(text: string, fallbackTitle: string)
     if (!content) continue;
     chapters.push({ title: block.title ?? fallbackTitle, content });
   }
-  return chapters;
+  return sanitizeChapters(chapters);
 }
 
 export type ContentIntegrity = {

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireApprovedUser } from "@/lib/require-approved-user";
 import { generateStructured, resolvePreferredProvider, type ToolSpec } from "@/lib/ai-client";
 import { withJsonErrors } from "@/lib/api-guard";
-import { enforceChapterCount, type BlueprintStructure } from "@/lib/blueprint-schema";
+import { enforceChapterCount, classifyBlueprintStructure, type BlueprintStructure } from "@/lib/blueprint-schema";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // Vercel Pro's standard ceiling
@@ -118,6 +118,12 @@ export const POST = withJsonErrors(async (request: Request) => {
       preferredProvider: await resolvePreferredProvider(supabase, project_id),
     });
     structure = result.output;
+    // Classify every entry via the one shared classifier (lib/document-
+    // model.ts) BEFORE enforceChapterCount runs — so an "Introduction" or
+    // "Conclusion" the model included in its outline is recognized as such
+    // and excluded from the chapter count, instead of being counted (and
+    // potentially merged away) as if it were a real chapter.
+    structure = classifyBlueprintStructure(structure);
     // The system prompt above tells the model the chapter count is a hard
     // requirement, but that's still just an instruction — real generations
     // have landed anywhere from 9 to 48 chapters against the same "exactly

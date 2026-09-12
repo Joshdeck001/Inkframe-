@@ -21,6 +21,7 @@ import {
   NumberFormat,
   SectionType,
 } from "docx";
+import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeQualityGate } from "@/lib/quality-gate";
 import { getPausedProjectIds } from "@/lib/production-paused";
@@ -36,7 +37,16 @@ import {
 import { fitToWidth } from "@/lib/image-dimensions";
 import { parseManuscriptBlocks, parseInlineEmphasis, type CalloutLabel } from "@/lib/manuscript-blocks";
 import { fetchImage, type LoadedImage } from "@/lib/fetch-image";
-import { buildEpubBuffer } from "@/lib/epub-builder";
+import { buildEpubBuffer, type EpubSectionInput } from "@/lib/epub-builder";
+import { sanitizeManuscriptText } from "@/lib/text-sanitize";
+import {
+  buildNormalizedDocumentModel,
+  validateDocumentStructure,
+  CURRENT_DOCUMENT_MODEL_VERSION,
+  CURRENT_FORMATTER_VERSION,
+  type RawSection,
+  type NormalizedSection,
+} from "@/lib/document-model";
 
 type DocElement = Paragraph | Table;
 
@@ -313,7 +323,7 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     supabase.from("project_scope").select("trim_size").eq("project_id", project.id).maybeSingle(),
     supabase
       .from("chapters")
-      .select("id, chapter_number, title, content")
+      .select("id, chapter_number, title, content, section_type, section_type_confidence")
       .eq("project_id", project.id)
       .order("chapter_number", { ascending: true }),
     supabase.from("cover_department").select("concepts, final_cover_ref").eq("project_id", project.id).maybeSingle(),
@@ -344,9 +354,26 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     interiorImagesByChapter.set(p.chapter_id, list);
   }
 
+  const rawChapters: RawSection[] = (chapters ?? []).map((c) => ({
+    id: c.id,
+    title: c.title,
+    content: c.content,
+    chapter_number: c.chapter_number,
+    section_type: c.section_type,
+    section_type_confidence: c.section_type_confidence,
+  }));
+  const sourceContentHash = createHash("sha256").update(rawChapters.map((c) => `${c.id}:${c.content}`).join("|")).digest("hex");
+
   const { data: formattingJob, error: jobError } = await supabase
     .from("formatting_jobs")
-    .insert({ project_id: project.id, output_formats: ["docx", "epub"], status: "processing" })
+    .insert({
+      project_id: project.id,
+      output_formats: ["docx", "epub"],
+      status: "processing",
+      formatter_version: CURRENT_FORMATTER_VERSION,
+      document_model_version: CURRENT_DOCUMENT_MODEL_VERSION,
+      source_content_hash: sourceContentHash,
+    })
     .select()
     .single();
   if (jobError) throw new Error(jobError.message);
@@ -354,6 +381,36 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
   try {
     const title = identity?.working_title || "Untitled Project";
     const year = new Date().getFullYear();
+
+    // ---- The normalized document model (lib/document-model.ts) — the ONE
+    // structure DOCX, EPUB, and the TOC/running-header logic below all
+    // derive from, replacing the old assumption that every chapters row is
+    // a numbered chapter. Any row still unclassified (section_type NULL —
+    // a project created before this architecture existed) gets classified
+    // now via the same shared classifier every other write path uses, and
+    // that classification is persisted back so it doesn't need re-guessing
+    // on the next run. ----
+    const model = buildNormalizedDocumentModel(rawChapters);
+    const toBackfill = model.sections.filter((s, i) => !rawChapters[i]?.section_type);
+    if (toBackfill.length > 0) {
+      await Promise.all(
+        toBackfill.map((s) =>
+          supabase
+            .from("chapters")
+            .update({ section_type: s.sectionType, section_type_confidence: s.confidence, needs_classification_review: s.needsReview })
+            .eq("id", s.id)
+        )
+      );
+    }
+    // Defensive sanitization pass — the primary pass runs at import
+    // ingestion (lib/manuscript-import.ts), but this catches anything
+    // written directly by the AI writer, or content saved before the
+    // ingestion-time pass existed.
+    for (const section of model.sections) {
+      section.title = section.title ? sanitizeManuscriptText(section.title) : section.title;
+      section.content = sanitizeManuscriptText(section.content);
+    }
+    const structureValidation = validateDocumentStructure(model);
 
     // ---- Front matter: title page, copyright page, real TOC field ----
     const titlePageParagraphs = [
@@ -381,11 +438,19 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       new Paragraph({ children: [new PageBreak()] }),
     ];
 
+    // Publisher/ISBN are real, optional fields (project_identity.publisher_name/
+    // isbn) — never a bracketed placeholder in the shipped file. When the
+    // author hasn't provided one, the line is omitted entirely rather than
+    // printing "[PUBLISHER / IMPRINT]"/"[ISBN]" — Book Health (lib/book-
+    // passport.ts) is where "not provided" gets surfaced to the author, not
+    // the exported book itself. Same for author name: a missing one omits
+    // the name from the copyright line rather than printing "[AUTHOR NAME]"
+    // in a file that might actually get published.
     const copyrightParagraphs = [
       new Paragraph({
         alignment: AlignmentType.CENTER,
         spacing: { before: 3600, after: 160 },
-        children: [new TextRun(`Copyright © ${year} ${identity?.author_name || "[AUTHOR NAME]"}`)],
+        children: [new TextRun(identity?.author_name ? `Copyright © ${year} ${identity.author_name}` : `Copyright © ${year}`)],
       }),
       new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 }, children: [new TextRun("All rights reserved.")] }),
       new Paragraph({
@@ -402,8 +467,12 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
           }),
         ],
       }),
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: "Publisher: [PUBLISHER / IMPRINT]", size: 18 })] }),
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: "ISBN: [ISBN]", size: 18 })] }),
+      ...(identity?.publisher_name
+        ? [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: `Publisher: ${identity.publisher_name}`, size: 18 })] })]
+        : []),
+      ...(identity?.isbn
+        ? [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: `ISBN: ${identity.isbn}`, size: 18 })] })]
+        : []),
       new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "First Edition", size: 18 })] }),
       new Paragraph({ children: [new PageBreak()] }),
     ];
@@ -413,6 +482,18 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       new TableOfContents("Table of Contents", { hyperlink: true, headingStyleRange: "1-1" }),
     ];
 
+    // Any chapters row classified as real front matter (e.g. a Dedication) —
+    // rendered as its own centered page, using its own title/content, never
+    // treated as a numbered chapter. Comes from the normalized model, not a
+    // separate hand-maintained list, per the "one document model" requirement.
+    const frontMatterDbParagraphs = model.sections
+      .filter((s) => s.sectionType === "front_matter")
+      .flatMap((s) => [
+        new Paragraph({ text: s.title || "", heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER, spacing: { before: 2400, after: 320 } }),
+        ...renderProseContent(s.content, { ...profile, bodyAlignment: AlignmentType.CENTER, firstLineIndent: false }),
+        new Paragraph({ children: [new PageBreak()] }),
+      ]);
+
     const frontMatterSection = {
       properties: {
         type: SectionType.NEXT_PAGE,
@@ -421,18 +502,18 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
       },
       headers: { default: emptyHeader(), first: emptyHeader() },
       footers: { default: pageNumberFooter(), first: emptyFooter() },
-      children: [...titlePageParagraphs, ...copyrightParagraphs, ...tocParagraphs],
+      children: [...titlePageParagraphs, ...copyrightParagraphs, ...frontMatterDbParagraphs, ...tocParagraphs],
     };
 
-    // ---- Load every chapter's interior images once, sequentially (not
-    // Promise.all — figure numbers must increment in chapter order, which
-    // parallel fetches racing each other can't guarantee), and reuse the
-    // same loaded bytes for both the DOCX and EPUB outputs below. ----
+    // ---- Load every section's interior images once, sequentially (not
+    // Promise.all — figure numbers must increment in real reading order,
+    // which parallel fetches racing each other can't guarantee), keyed by
+    // section id (stable across front matter/introduction/chapter/
+    // conclusion/back matter alike) and reused for both DOCX and EPUB. ----
     let figureNumber = 0;
-    const chapterList = chapters ?? [];
-    const chapterImages: { image: LoadedImage; caption: string | null }[][] = [];
-    for (const chapter of chapterList) {
-      const images = interiorImagesByChapter.get(chapter.id) ?? [];
+    const imagesBySection = new Map<string, { image: LoadedImage; caption: string | null }[]>();
+    for (const section of model.sections) {
+      const images = interiorImagesByChapter.get(section.id) ?? [];
       const loaded: { image: LoadedImage; caption: string | null }[] = [];
       for (const p of images) {
         const image = await fetchImage(p.file_ref);
@@ -441,68 +522,105 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
           loaded.push({ image, caption: `Figure ${figureNumber}${p.placement_location ? `. ${p.placement_location}` : ""}` });
         }
       }
-      chapterImages.push(loaded);
+      imagesBySection.set(section.id, loaded);
     }
 
-    // ---- Body: one docx section per chapter, so running headers/page
-    // numbering can genuinely change per chapter and reset at the body. ----
-    const chapterSections = chapterList.map((chapter, chapterIndex) => {
-      const loadedImages = chapterImages[chapterIndex];
-      const bodyElements: DocElement[] = family === "fiction" ? renderProseContent(chapter.content, profile) : renderStructuredContent(chapter.content, contentWidth);
+    function imageElementsFor(section: NormalizedSection): Paragraph[] {
+      return (imagesBySection.get(section.id) ?? []).flatMap(({ image, caption }) => [
+        new Paragraph({
+          children: [new ImageRun({ type: image.type, data: image.buffer, transformation: fitToWidth(image.buffer, 300) })],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 80 },
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 400 },
+          children: [new TextRun({ text: caption ?? "", italics: true, size: 18 })],
+        }),
+      ]);
+    }
 
-        const imageElements: Paragraph[] = loadedImages.flatMap(({ image, caption }) => [
-          new Paragraph({
-            children: [new ImageRun({ type: image.type, data: image.buffer, transformation: fitToWidth(image.buffer, 300) })],
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 80 },
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 400 },
-            children: [new TextRun({ text: caption ?? "", italics: true, size: 18 })],
-          }),
-        ]);
+    // ---- Body: introduction (if present) + numbered chapters + conclusion
+    // (if present), one docx section each, in normalized reading order —
+    // replacing the old assumption that every chapters row was a numbered
+    // chapter. Only sectionType === "chapter" ever gets a "Chapter N"
+    // heading; introduction/conclusion use their own real title text
+    // instead, and neither counts toward chapter numbering. Page numbering
+    // restarts at 1 on whichever of these is genuinely first (the
+    // Introduction when there is one, otherwise Chapter 1), not
+    // hard-coded to "the first chapters row". ----
+    const bodySectionModels = model.sections.filter((s) => s.sectionType === "introduction" || s.sectionType === "chapter" || s.sectionType === "conclusion");
+    const chapterSections = bodySectionModels.map((section, bodyIndex) => {
+      const bodyElements: DocElement[] = family === "fiction" ? renderProseContent(section.content, profile) : renderStructuredContent(section.content, contentWidth);
+      const imageElements = imageElementsFor(section);
 
-        const chapterHeadingText = `Chapter ${numberToWords(chapter.chapter_number)}`;
-        const children: DocElement[] = [
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            keepNext: true,
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 1200, after: chapter.title ? 80 : 480 },
-            children: [new TextRun({ text: chapterHeadingText, bold: true, size: profile.chapterHeadingSize })],
-          }),
-          ...(chapter.title
-            ? [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  spacing: { after: 480 },
-                  children: inlineRuns(chapter.title, { italics: profile.chapterTitleItalic, bold: !profile.chapterTitleItalic, size: 24 }),
-                }),
-              ]
-            : []),
-          ...imageElements,
-          ...bodyElements,
-        ];
+      const headingText =
+        section.sectionType === "chapter"
+          ? `Chapter ${numberToWords(section.displayNumber!)}`
+          : section.title || (section.sectionType === "introduction" ? "Introduction" : "Conclusion");
+      // A chapter shows its own title as a subtitle line under "Chapter N";
+      // an introduction/conclusion's title IS the heading already, so there's
+      // no separate subtitle line for those.
+      const subtitleText = section.sectionType === "chapter" ? section.title : null;
 
-        return {
-          properties: {
-            type: SectionType.NEXT_PAGE,
-            page: {
-              size: pageSize,
-              margin: pageMargin,
-              ...(chapterIndex === 0 ? { pageNumbers: { start: 1, formatType: NumberFormat.DECIMAL } } : {}),
-            },
-            titlePage: true,
+      const children: DocElement[] = [
+        new Paragraph({
+          heading: HeadingLevel.HEADING_1,
+          keepNext: true,
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 1200, after: subtitleText ? 80 : 480 },
+          children: [new TextRun({ text: headingText, bold: true, size: profile.chapterHeadingSize })],
+        }),
+        ...(subtitleText
+          ? [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 480 },
+                children: inlineRuns(subtitleText, { italics: profile.chapterTitleItalic, bold: !profile.chapterTitleItalic, size: 24 }),
+              }),
+            ]
+          : []),
+        ...imageElements,
+        ...bodyElements,
+      ];
+
+      return {
+        properties: {
+          type: SectionType.NEXT_PAGE,
+          page: {
+            size: pageSize,
+            margin: pageMargin,
+            ...(bodyIndex === 0 ? { pageNumbers: { start: 1, formatType: NumberFormat.DECIMAL } } : {}),
           },
-          headers: { default: runningHeader(chapter.title || chapterHeadingText), even: runningHeader(title), first: emptyHeader() },
-          footers: { default: pageNumberFooter(), first: pageNumberFooter() },
-          children,
-        };
+          titlePage: true,
+        },
+        headers: { default: runningHeader(section.title || headingText), even: runningHeader(title), first: emptyHeader() },
+        footers: { default: pageNumberFooter(), first: pageNumberFooter() },
+        children,
+      };
     });
 
-    // ---- Back matter: only what's actually backed by real data. ----
-    const backMatterSections = identity?.author_name
+    // ---- Back matter: real chapters-row back matter (e.g. a Glossary),
+    // then the existing "About the Author" page, only when there's real
+    // data for it. ----
+    const backMatterDbSections = model.sections
+      .filter((s) => s.sectionType === "back_matter")
+      .map((section) => {
+        const bodyElements: DocElement[] = family === "fiction" ? renderProseContent(section.content, profile) : renderStructuredContent(section.content, contentWidth);
+        const headingText = section.title || "Appendix";
+        return {
+          properties: { type: SectionType.NEXT_PAGE, page: { size: pageSize, margin: pageMargin }, titlePage: true },
+          headers: { default: runningHeader(headingText), even: runningHeader(title), first: emptyHeader() },
+          footers: { default: pageNumberFooter(), first: pageNumberFooter() },
+          children: [
+            new Paragraph({ heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER, spacing: { before: 1200, after: 320 }, text: headingText }),
+            ...imageElementsFor(section),
+            ...bodyElements,
+          ],
+        };
+      });
+
+    const aboutAuthorSections = identity?.author_name
       ? [
           {
             properties: { type: SectionType.NEXT_PAGE, page: { size: pageSize, margin: pageMargin } },
@@ -527,22 +645,26 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
           },
         },
       },
-      sections: [frontMatterSection, ...chapterSections, ...backMatterSections],
+      sections: [frontMatterSection, ...chapterSections, ...backMatterDbSections, ...aboutAuthorSections],
     });
 
     const docxBuffer = await Packer.toBuffer(doc);
+    const epubSections: EpubSectionInput[] = model.sections.map((section) => ({
+      sectionType: section.sectionType,
+      displayNumber: section.displayNumber,
+      title: section.title,
+      content: section.content,
+      images: imagesBySection.get(section.id) ?? [],
+    }));
     const epubBuffer = await buildEpubBuffer({
       title,
       subtitle: identity?.subtitle ?? null,
       authorName: identity?.author_name ?? null,
+      publisherName: identity?.publisher_name ?? null,
+      isbn: identity?.isbn ?? null,
       family,
       coverImage,
-      chapters: chapterList.map((chapter, i) => ({
-        chapterNumber: chapter.chapter_number,
-        title: chapter.title,
-        content: chapter.content,
-        images: chapterImages[i],
-      })),
+      sections: epubSections,
     });
 
     const docxPath = `${project.user_id}/${project.id}/manuscript.docx`;
@@ -561,9 +683,20 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     if (docxUploadError) throw new Error(docxUploadError.message);
     if (epubUploadError) throw new Error(epubUploadError.message);
 
+    // A real structural problem (duplicate conclusion, an unresolved
+    // placeholder, leftover broken Unicode) marks this build
+    // "needs_attention" rather than "complete" — the files still exist and
+    // upload (so the author/support can see exactly what's wrong), but this
+    // build's own record is honest that it isn't a clean pass. Book Health
+    // (lib/book-passport.ts) is the actual publication-readiness gate and
+    // re-validates independently, so this never silently blocks the
+    // pipeline — the project still moves forward to review.
     await supabase
       .from("formatting_jobs")
-      .update({ status: "complete", output_files: [docxPath, epubPath] })
+      .update({
+        status: structureValidation.errors.length > 0 ? "needs_attention" : "complete",
+        output_files: [docxPath, epubPath],
+      })
       .eq("id", formattingJob.id);
 
     await supabase.from("export_records").insert([
@@ -578,9 +711,15 @@ export async function runFormattingDepartmentTick(supabase: SupabaseClient): Pro
     await supabase.from("projects").update({ status: "READY_FOR_REVIEW" }).eq("id", project.id);
 
     const embeddedImages = (coverImage ? 1 : 0) + figureNumber;
+    const structureNote =
+      structureValidation.errors.length > 0
+        ? ` STRUCTURE ISSUES FOUND (${structureValidation.errors.length}): ${structureValidation.errors.join(" | ")}`
+        : structureValidation.warnings.length > 0
+          ? ` (${structureValidation.warnings.length} classification warning(s) — see Book Health)`
+          : "";
     return {
       processed: true,
-      detail: `Project ${project.id}: manuscript.docx and manuscript.epub generated (${family} design profile, ${embeddedImages} image(s) embedded), quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.`,
+      detail: `Project ${project.id}: manuscript.docx and manuscript.epub generated (${family} design profile, ${embeddedImages} image(s) embedded), quality gate scored ${gate.overall_readiness_score}/100, moved to READY_FOR_REVIEW.${structureNote}`,
     };
   } catch (e) {
     await supabase.from("formatting_jobs").update({ status: "failed" }).eq("id", formattingJob.id);

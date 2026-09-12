@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildNormalizedDocumentModel, validateDocumentStructure, type RawSection } from "@/lib/document-model";
 
 /**
  * The Book Passport: a single, read-only assembly of the canonical record
@@ -54,6 +55,8 @@ export type BookPassport = {
   } | null;
   chapters: { total: number; approved: number; titles: { number: number; title: string | null }[] };
   ebookFormatting: { status: string | null; outputFormats: string[] };
+  /** Real structural health (lib/document-model.ts) — duplicate conclusions, unresolved placeholders, un-reviewed low-confidence section classification, broken Unicode. Computed fresh from current chapters every time, never a stale snapshot. */
+  documentStructure: { errors: string[]; warnings: string[] };
   qualityGate: {
     overallReadinessScore: number | null;
     contentCheck: boolean;
@@ -108,7 +111,11 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
     supabase.from("project_style").select("*").eq("project_id", projectId).maybeSingle(),
     supabase.from("project_scope").select("*").eq("project_id", projectId).maybeSingle(),
     supabase.from("project_platform").select("*").eq("project_id", projectId).maybeSingle(),
-    supabase.from("chapters").select("chapter_number, title, status").eq("project_id", projectId).order("chapter_number", { ascending: true }),
+    supabase
+      .from("chapters")
+      .select("id, chapter_number, title, content, status, section_type, section_type_confidence")
+      .eq("project_id", projectId)
+      .order("chapter_number", { ascending: true }),
     supabase.from("quality_gate").select("*").eq("project_id", projectId).maybeSingle(),
     supabase
       .from("formatting_jobs")
@@ -133,6 +140,15 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
   if (!project) return null;
 
   const chapterRows = chapters ?? [];
+  const rawSections: RawSection[] = chapterRows.map((c) => ({
+    id: c.id,
+    title: c.title,
+    content: c.content,
+    chapter_number: c.chapter_number,
+    section_type: c.section_type,
+    section_type_confidence: c.section_type_confidence,
+  }));
+  const documentStructure = validateDocumentStructure(buildNormalizedDocumentModel(rawSections));
   const coverConcepts = Array.isArray(cover?.concepts) ? (cover!.concepts as { status: string }[]) : [];
   const coverStatus: BookPassport["cover"]["status"] = cover?.final_cover_ref
     ? "done"
@@ -189,6 +205,7 @@ export async function assembleBookPassport(supabase: SupabaseClient, projectId: 
       titles: chapterRows.map((c) => ({ number: c.chapter_number, title: c.title })),
     },
     ebookFormatting: { status: formattingJob?.status ?? null, outputFormats: formattingJob?.output_formats ?? [] },
+    documentStructure,
     qualityGate: qualityGate
       ? {
           overallReadinessScore: qualityGate.overall_readiness_score,
@@ -260,6 +277,17 @@ export function computeBookHealth(passport: BookPassport): BookHealth {
   const checks: BookHealthCheck[] = [
     { label: "Manuscript (all chapters approved)", ok: passport.chapters.total > 0 && passport.chapters.approved === passport.chapters.total, route: `/formatter?project=${projectId}` },
     { label: "Ebook formatting (DOCX/EPUB)", ok: passport.ebookFormatting.status === "complete", route: `/formatter?project=${projectId}` },
+    // Real document-structure validation (lib/document-model.ts) — duplicate
+    // conclusions, unresolved [AUTHOR NAME]/[PUBLISHER]/[ISBN] placeholders
+    // leaked into a section's own text, leftover broken Unicode. A build
+    // with any of these is never publication-ready, regardless of whether
+    // ebookFormatting.status happened to say "complete".
+    { label: "Document structure (chapters, front/back matter, no duplicates)", ok: passport.documentStructure.errors.length === 0, route: `/formatter?project=${projectId}` },
+    // Author name is real project_identity data (never a template
+    // placeholder) — but formatting only interpolates it when actually
+    // set, so a missing one must block here rather than let "[AUTHOR
+    // NAME]" quietly reach a publication-ready export.
+    { label: "Author name set", ok: !!passport.identity?.authorName, route: `/passport?project=${projectId}` },
     { label: "Cover", ok: passport.cover.status === "done", route: `/cover?project=${projectId}` },
     { label: "Metadata", ok: passport.metadata.status === "done", route: `/metadata?project=${projectId}` },
     { label: "Quality gate scored", ok: !!passport.qualityGate?.overallReadinessScore, route: `/publish?project=${projectId}` },

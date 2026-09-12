@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { parseManuscriptBlocks, parseInlineEmphasis, type ManuscriptBlock } from "@/lib/manuscript-blocks";
 import { numberToWords, type BookDesignFamily } from "@/lib/book-format";
 import type { LoadedImage } from "@/lib/fetch-image";
+import type { SectionType } from "@/lib/document-model";
 
 /**
  * A real EPUB 3 book — same content model as the DOCX Formatting
@@ -17,8 +18,16 @@ import type { LoadedImage } from "@/lib/fetch-image";
  * against the real, official EPUBCheck validator during development.
  */
 
-export type EpubChapterInput = {
-  chapterNumber: number;
+/**
+ * One normalized section (lib/document-model.ts) — front matter,
+ * introduction, a numbered chapter, a conclusion, or back matter — the
+ * same structure lib/formatting-department.ts computes once and passes
+ * to both the DOCX and EPUB builders, so they can never disagree about
+ * what a book's sections actually are.
+ */
+export type EpubSectionInput = {
+  sectionType: SectionType;
+  displayNumber: number | null;
   title: string | null;
   content: string;
   images: { image: LoadedImage; caption: string | null }[];
@@ -28,9 +37,12 @@ export type EpubInput = {
   title: string;
   subtitle: string | null;
   authorName: string | null;
+  /** Real, optional — never a bracketed placeholder. Omitted from the copyright page entirely when not provided. */
+  publisherName: string | null;
+  isbn: string | null;
   family: BookDesignFamily;
   coverImage: LoadedImage | null;
-  chapters: EpubChapterInput[];
+  sections: EpubSectionInput[];
 };
 
 function esc(text: string): string {
@@ -247,30 +259,55 @@ export async function buildEpubBuffer(input: EpubInput): Promise<Buffer> {
   manifestItems.push(`<item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml" />`);
   spineItems.push(`<itemref idref="titlepage" linear="yes" />`);
 
-  // ---- Copyright page ----
+  // ---- Copyright page. Publisher/ISBN are real, optional fields — never a
+  // bracketed placeholder; the line is simply omitted when not provided
+  // (see lib/formatting-department.ts's identical DOCX-side handling). An
+  // author name reaching this omits the name from the line entirely rather
+  // than printing "[AUTHOR NAME]" into a file that might get published. ----
   const year = new Date().getFullYear();
   const copyrightHtml = `
-<p>Copyright &#169; ${year} ${esc(input.authorName || "[AUTHOR NAME]")}</p>
+<p>${input.authorName ? `Copyright &#169; ${year} ${esc(input.authorName)}` : `Copyright &#169; ${year}`}</p>
 <p>All rights reserved.</p>
 <p style="font-size:0.85em;">No part of this publication may be reproduced, distributed, or transmitted in any
 form or by any means, including photocopying, recording, or other electronic or mechanical methods, without
 the prior written permission of the publisher, except in the case of brief quotations embodied in critical
 reviews and certain other noncommercial uses permitted by copyright law.</p>
-<p style="font-size:0.85em;">Publisher: [PUBLISHER / IMPRINT]</p>
-<p style="font-size:0.85em;">ISBN: [ISBN]</p>
+${input.publisherName ? `<p style="font-size:0.85em;">Publisher: ${esc(input.publisherName)}</p>` : ""}
+${input.isbn ? `<p style="font-size:0.85em;">ISBN: ${esc(input.isbn)}</p>` : ""}
 <p style="font-size:0.85em;">First Edition</p>`;
   oebps.file("copyright.xhtml", xhtmlDoc("Copyright", "copyrightpage", copyrightHtml));
   manifestItems.push(`<item id="copyright" href="copyright.xhtml" media-type="application/xhtml+xml" />`);
   spineItems.push(`<itemref idref="copyright" linear="yes" />`);
 
-  // ---- Chapters ----
+  // ---- Any chapters row classified as real front matter (e.g. a
+  // Dedication) — own page, own title/content, never a numbered chapter. ----
+  const frontMatterSections = input.sections.filter((s) => s.sectionType === "front_matter");
+  frontMatterSections.forEach((section, i) => {
+    const id = `frontmatter-${i}`;
+    const headingText = section.title || "Front Matter";
+    const html = `<h1>${esc(headingText)}</h1>\n${chapterContentHtml(section.content, input.family)}`;
+    oebps.file(`${id}.xhtml`, xhtmlDoc(headingText, "titlepage", html));
+    manifestItems.push(`<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml" />`);
+    spineItems.push(`<itemref idref="${id}" linear="yes" />`);
+  });
+
+  // ---- Introduction / numbered chapters / Conclusion, in normalized
+  // reading order — the same three sectionTypes lib/formatting-
+  // department.ts renders as the DOCX body. Only "chapter" ever gets a
+  // "Chapter N" heading; introduction/conclusion use their own real title
+  // text and are never counted toward chapter numbering. ----
   const navPoints: string[] = [];
-  for (const chapter of input.chapters) {
-    const id = `chapter-${chapter.chapterNumber}`;
-    const headingText = `Chapter ${numberToWords(chapter.chapterNumber)}`;
+  const bodySections = input.sections.filter((s) => s.sectionType === "introduction" || s.sectionType === "chapter" || s.sectionType === "conclusion");
+  for (const section of bodySections) {
+    const id = section.sectionType === "chapter" ? `chapter-${section.displayNumber}` : section.sectionType;
+    const headingText =
+      section.sectionType === "chapter"
+        ? `Chapter ${numberToWords(section.displayNumber!)}`
+        : section.title || (section.sectionType === "introduction" ? "Introduction" : "Conclusion");
+    const subtitleText = section.sectionType === "chapter" ? section.title : null;
 
     const imageParts: string[] = [];
-    for (const { image, caption } of chapter.images) {
+    for (const { image, caption } of section.images) {
       figureNumber++;
       const ext = imageExt(image);
       const filename = `interior-${figureNumber}.${ext}`;
@@ -282,9 +319,9 @@ reviews and certain other noncommercial uses permitted by copyright law.</p>
 
     const bodyHtml = [
       `<h1 class="chapter-heading">${esc(headingText)}</h1>`,
-      chapter.title ? `<p class="chapter-title">${escInline(chapter.title)}</p>` : "",
+      subtitleText ? `<p class="chapter-title">${escInline(subtitleText)}</p>` : "",
       ...imageParts,
-      chapterContentHtml(chapter.content, input.family),
+      chapterContentHtml(section.content, input.family),
     ]
       .filter(Boolean)
       .join("\n");
@@ -292,8 +329,20 @@ reviews and certain other noncommercial uses permitted by copyright law.</p>
     oebps.file(`${id}.xhtml`, xhtmlDoc(headingText, "chapter", bodyHtml));
     manifestItems.push(`<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml" />`);
     spineItems.push(`<itemref idref="${id}" linear="yes" />`);
-    navPoints.push(`<li><a href="${id}.xhtml">${esc(headingText)}${chapter.title ? ` — ${esc(chapter.title)}` : ""}</a></li>`);
+    navPoints.push(`<li><a href="${id}.xhtml">${esc(headingText)}${subtitleText ? ` — ${esc(subtitleText)}` : ""}</a></li>`);
   }
+
+  // ---- Any chapters row classified as real back matter (e.g. a Glossary) ----
+  const backMatterDbSections = input.sections.filter((s) => s.sectionType === "back_matter");
+  backMatterDbSections.forEach((section, i) => {
+    const id = `backmatter-db-${i}`;
+    const headingText = section.title || "Appendix";
+    const html = `<h1>${esc(headingText)}</h1>\n${chapterContentHtml(section.content, input.family)}`;
+    oebps.file(`${id}.xhtml`, xhtmlDoc(headingText, "backmatter", html));
+    manifestItems.push(`<item id="${id}" href="${id}.xhtml" media-type="application/xhtml+xml" />`);
+    spineItems.push(`<itemref idref="${id}" linear="yes" />`);
+    navPoints.push(`<li><a href="${id}.xhtml">${esc(headingText)}</a></li>`);
+  });
 
   // ---- Back matter (only when there's real data) ----
   if (input.authorName) {

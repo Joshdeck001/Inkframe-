@@ -4,6 +4,7 @@ import { requireApprovedUser } from "@/lib/require-approved-user";
 import { withJsonErrors } from "@/lib/api-guard";
 import { wordCount } from "@/lib/manuscript-import";
 import { runTitleAndCategoryResearch } from "@/lib/research-check";
+import { classifySection } from "@/lib/document-model";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -109,18 +110,31 @@ export const POST = withJsonErrors(async (request: Request) => {
   // the formatting engine already falls back to 6x9 when it's unset.
   await supabase.from("project_scope").update({ trim_size: resolvedTrimSize }).eq("project_id", projectId);
 
+  // Classified from each chapter's own (possibly author-edited) title at the
+  // moment of insert — not carried over from parse — so a title the author
+  // renamed on the review screen is classified as it actually reads now, via
+  // the one shared classifier every other write path uses (lib/document-
+  // model.ts). Low-confidence guesses still insert as section_type: "chapter"
+  // (nothing is hidden or renumbered away) with needs_classification_review
+  // set, surfaced later in Book Health rather than guessed away silently.
   const { error: chaptersError } = await supabase.from("chapters").insert(
-    reviewedChapters.map((c, i) => ({
-      project_id: projectId,
-      chapter_number: i + 1,
-      title: c.title,
-      objective: "Imported from the author's own manuscript.",
-      target_words: wordCount(c.content),
-      actual_words: wordCount(c.content),
-      content: c.content,
-      status: "approved",
-      model_used: "user_import",
-    }))
+    reviewedChapters.map((c, i) => {
+      const { sectionType, confidence } = classifySection(c.title);
+      return {
+        project_id: projectId,
+        chapter_number: i + 1,
+        title: c.title,
+        objective: "Imported from the author's own manuscript.",
+        target_words: wordCount(c.content),
+        actual_words: wordCount(c.content),
+        content: c.content,
+        status: "approved",
+        model_used: "user_import",
+        section_type: sectionType,
+        section_type_confidence: confidence,
+        needs_classification_review: confidence === "low",
+      };
+    })
   );
   if (chaptersError) {
     await supabase.from("projects").delete().eq("id", projectId);

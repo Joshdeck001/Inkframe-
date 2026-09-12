@@ -5,6 +5,7 @@ import { generateText, modelUsedLabel, resolvePreferredProvider } from "@/lib/ai
 import { isStructuredBookType, getDesignFamily, writingGuidanceFor } from "@/lib/book-format";
 import { storyBibleToPromptFacts, type StoryBible } from "@/lib/story-bible";
 import { fetchAcceptedResearchFacts } from "@/lib/research-context";
+import { classifySection } from "@/lib/document-model";
 
 /**
  * One tick of the autonomous Writing Agent: picks the single
@@ -187,14 +188,25 @@ async function ensureChaptersSeeded(supabase: SupabaseClient, projectId: string)
 
   const structure = blueprint.structure as BlueprintStructure;
   const rows = structure.parts.flatMap((part) =>
-    part.chapters.map((chapter) => ({
-      project_id: projectId,
-      chapter_number: chapter.number,
-      title: chapter.title,
-      objective: chapter.objective,
-      target_words: chapter.word_allocation,
-      status: "pending" as const,
-    }))
+    part.chapters.map((chapter) => {
+      // section_type is normally already set by classifyBlueprintStructure
+      // (app/api/blueprint/route.ts) before this blueprint was ever
+      // approved — the fallback here only covers a blueprint approved
+      // before that existed, so every chapter still gets classified via
+      // the same one shared classifier rather than defaulting silently.
+      const classified = chapter.section_type ? { sectionType: chapter.section_type, confidence: chapter.section_type_confidence ?? "high" } : classifySection(chapter.title);
+      return {
+        project_id: projectId,
+        chapter_number: chapter.number,
+        title: chapter.title,
+        objective: chapter.objective,
+        target_words: chapter.word_allocation,
+        status: "pending" as const,
+        section_type: classified.sectionType,
+        section_type_confidence: classified.confidence,
+        needs_classification_review: classified.confidence === "low",
+      };
+    })
   );
   if (rows.length > 0) {
     await supabase.from("chapters").insert(rows);
